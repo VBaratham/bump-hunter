@@ -6,7 +6,7 @@ Author: Vyassa Baratham <vbaratham@berkeley.edu>
 
 import math
 
-from ROOT import Math
+from ROOT import TMath
 
 class BumpHunter(object):
     """
@@ -28,8 +28,44 @@ class BumpHunter(object):
         """
         return (
             sum(self.histo.GetBinContent(b) for b in bins),
-            sum(self.histo.GetBinError(b) for b in bins)
+            math.sqrt(sum(self.histo.GetBinError(b)*self.histo.GetBinError(b) for b in bins))
         )
+
+
+    def mean_poisson_pval(d, b, b_error, conv_width=3, step_size=1):
+        """
+        Mostly transcribed from
+        https://svnweb.cern.ch/trac/atlasoff/browser/Trigger/TrigFTK/SuPlot/trunk/src/bumphunter/StatisticsAnalysis.C
+        (including the docstring)
+
+        Convolve a Gaussian (non-negative part) with a Poisson. Background is b+-deltaB, and
+        we need the mean Poisson probability to observe at least d (if d >=b, else at most d), given this PDF for b.
+        The way is to cut the PDF or b into segments, whose area is exactly calculable, take the
+        Poisson probability at the center of each gaussian slice, and average the probabilities
+        using the area of each slice as weight.
+
+        d - data counts
+        b - background counts
+        b_error - error in bkg counts
+        conv_width - range of l in convolution loop (I think this is how many sigmas of to convolve)
+        step_size - step size for convolution
+
+        TODO: I think there might be a better way to do this using ROOT.TMath
+        """
+        if b_error == 0:
+            return TMath.Gamma(d, b) # Guaranteed to have d > b, so this is equivalent to commonFunctions.h:503
+
+        # TODO: Pythonify
+        mean, total_weight = 0.0, 0.0
+        l = -conv_width
+        while l <= conv_width:
+            bcenter = max(0, b + l*b_error)
+            this_slice_weight = TMath.normal_cdf(l + 0.5*step_size) - TMath.normal_cdf(l - 0.5*step_size)
+            this_pval = TMath.Gamma(d, bcenter) # Guaranteed to have d > b, so this is equivalent to StatisticsAnalysis.C:1710
+            mean += this_pval*this_slice_weight
+            total_weight += this_slice_weight
+            l += step_size
+        return mean / total_weight
         
 
 class BumpHunter2D(BumpHunter):
@@ -171,7 +207,7 @@ class BumpHunter2D(BumpHunter):
         """
         pass
 
-    def get_p_vals(self):
+    def get_pvals(self):
         """
         Iterate over widths and center locations ("pseudoexperiments"), compute
         the background (null hypothesis),and calculate p-values for each. Yield the
@@ -182,11 +218,15 @@ class BumpHunter2D(BumpHunter):
             for center, central_window, sideband in self.central_windows_and_sidebands(central_width, sideband_width):
                 # At this point, central_window and sideband are collections of
                 # Global bin numbers
-                bkg_histo = self.bkg_histo or self.bkg_fcn(self.histo, central_window, sideband)
-                data_central_window_sum, data_central_window_error = BumpHunter.integrate_histo_with_error(self.histo, central_window)
-                bkg_central_window_sum, bkg_central_window_error = BumpHunter.integrate_histo_with_error(bkg_histo, central_window)
-                data_sideband_sum, data_sideband_error = BumpHunter.integrate_histo_with_error(self.histo, sideband)
-                bkg_sideband_sum, bkg_sideband_error = BumpHunter.integrate_histo_with_error(bkg_histo, sideband)
+                bkg_histo = self.bkg_histo or self.bkg_histo(central_window, sideband)
+
+                # Integrate histograms over the central window and sidebands
+                # Note we will not be able to use TH2.Integrate() for non rectangular windows,
+                # so we don't bother using it here even though it would presumably be faster
+                dc, dc_error = BumpHunter.integrate_histo_with_error(self.histo, central_window)  # counts/error of data in the central window
+                bc, bc_error = BumpHunter.integrate_histo_with_error(bkg_histo, central_window)  # counts/error of bkg in the central window
+                ds, ds_error = BumpHunter.integrate_histo_with_error(self.histo, sideband)  # counts/error of data in the sideband
+                bs, bs_error = BumpHunter.integrate_histo_with_error(bkg_histo, sideband)  # counts/error of bkg in the sideband
 
                 if bkg_central_window_sum == 0:
                     continue  # TODO: Is this necessary?
@@ -195,5 +235,7 @@ class BumpHunter2D(BumpHunter):
 
                 # TODO: implement deficit detection
 
-                central_window_p = None
-                sideband_p = None
+                central_window_p = BumpHunter.mean_poisson_pval(dc, bc, bc_error)
+                sideband_p = BumpHunter.mean_poisson_pval(ds, bs, bs_error)
+
+                
