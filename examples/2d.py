@@ -1,9 +1,9 @@
 """
 Creates a 2d histogram consisting of a Gaussian signal and exponentially decaying background,
-runs 2d bumphunter, and outputs results
+runs 2d bumphunter, and shows results in ROOT windows
 """
 
-from ROOT import TH2F, TRandom3
+from ROOT import TH2F, TRandom3, TCanvas
 
 NUM_BINS = 40  # per dimension
 BIN_SIZE = 0.5
@@ -37,8 +37,10 @@ def make_histo():
 
 if __name__ == '__main__':
     histo = make_histo()
-    histo.Draw("LEGO")
-    
+    histo.Draw("LEGO2")
+
+    # c2 = TCanvas('c2')
+    # histo.Draw("SURF2")
 
     # Hang the program so the user can look at the output
     raw_input("Press enter to quit")
