@@ -69,26 +69,39 @@ class BumpHunter(object):
         
 
 class BumpHunter2D(BumpHunter):
+    """Implementation of 2D BumpHunter"""
     
-
     def __init__(
-            self, histo,
+            self,
+            histo,
             bkg_histo=None,
             window_def=BumpHunter.WINDOW_DEF_RECTANGLE,
-            sideband_def=BumpHunter.SIDEBAND_DEF_RECTANGLE
+            sideband_def=BumpHunter.SIDEBAND_DEF_RECTANGLE,
+            sideband_req=1e-3,
     ):
         """
         histo - TH2 containing the data to analyze
         bkg_histo - background histo (null hypothesis) to be used for all "psuedoexperiments"
-        bkg_fcn - callable that takes arguments (data histo, central_window, sideband)
-                  for each "pseudoexperiment" and 
+        window_def - how to define the window shape (one of BumpHunter.WINDOW_DEF_*)
+        sideband_def - how to define the sideband shape (one of BumpHunter.SIDEBAND_DEF_*)
+        sideband_req - the maximum pval for the sideband that we accept (higher: more
+                       strict prohibition of excesses in the sideband relative to bkg)
         """
         self.histo = histo
-        self.bkg_histo = bkg_histo
-        self.bkg_fcn = bkg_fcn
+        self.bkg_histo = bkg_histo or BumpHunter2D.bkg_histo(histo)
         self.window_def = window_def
         self.sideband_def = sideband_def
     
+    def bkg_histo(data_histo):
+        """
+        Return a histogram to be used as background (null hypothesis). When
+        Implemented, it should ideally use the process described
+        in sec 2.1.1 of arxiv.org/pdf/1101.0390.pdf, or in sec 8.1 of
+        https://cds.cern.ch/record/2151829/files/ATL-COM-PHYS-2016-471.pdf,
+        or at least just fit an exponential to the data histo and fill a new histo
+        with that distribution.
+        """
+        raise NotImplementedError("deriving background from data not yet implemented")
 
     def central_window_widths(self):
         """
@@ -185,40 +198,25 @@ class BumpHunter2D(BumpHunter):
             yield (center, central_window, sideband)
 
 
-    def bkg_histo(self, central_window, sideband):
-        """
-        Return a histogram to be used as background (null hypothesis)
-        for examining the given central_window and sideband. If self.bkg_histo
-        is defined, just uses that.
-
-        central_window - list of Global bin numbers of the central window
-        sideband - list of Global bin numbers of the sideband
-        """
-        if self.bkg_histo:
-            return self.bkg_histo
-        else:
-            # TODO: Implement
-            raise NotImplementedError("deriving background from data not yet implemented")
-
-
     def get_statistic(self):
         """
         Compute the BumpHunter test statistic
         """
-        pass
+        return -math.log(min(self.pvals))
 
-    def get_pvals(self):
+
+    def pvals(self):
         """
-        Iterate over widths and center locations ("pseudoexperiments"), compute
+        Iterate over widths and center locations, compute
         the background (null hypothesis),and calculate p-values for each. Yield the
-        ones that are interesting (a p-val is interesting if it is less than 1)
+        ones that are interesting (a p-val is interesting if it is less than 1), along with their center and width
         """
         for central_width in self.central_window_widths():
             sideband_width = self.sideband_width(central_width)
             for center, central_window, sideband in self.central_windows_and_sidebands(central_width, sideband_width):
                 # At this point, central_window and sideband are collections of
                 # Global bin numbers
-                bkg_histo = self.bkg_histo or self.bkg_histo(central_window, sideband)
+                bkg_histo = self.bkg_histo #or self.bkg_histo(central_window, sideband)
 
                 # Integrate histograms over the central window and sidebands
                 # Note we will not be able to use TH2.Integrate() for non rectangular windows,
@@ -236,6 +234,13 @@ class BumpHunter2D(BumpHunter):
                 # TODO: implement deficit detection
 
                 central_window_p = BumpHunter.mean_poisson_pval(dc, bc, bc_error)
-                sideband_p = BumpHunter.mean_poisson_pval(ds, bs, bs_error)
+                sideband_p = BumpHunter.mean_poisson_pval(ds, bs, bs_error) # TODO: check if we are not using sidebands
 
-                
+                if sideband_p < self.sideband_req:
+                    continue
+
+                # We return central_window_p, rather than eq (17) in
+                # arxiv.org/pdf/1101.0390.pdf, in light of the paragraph
+                # after that equation
+                yield central_window_p
+
