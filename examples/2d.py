@@ -6,7 +6,7 @@ runs 2d bumphunter, and shows results in ROOT windows
 from ROOT import TH2F, TRandom3, TCanvas
 
 NUM_BINS = 40  # per dimension
-BIN_SIZE = 0.5
+BIN_SIZE = 0.5 # square bins for simplicity
 NUM_BKG_EVENTS = 100000
 NUM_SIG_EVENTS = 300
 BKG_MEAN = 8
@@ -49,7 +49,11 @@ if __name__ == '__main__':
 
     from bumphunter import BumpHunter2D
     b = BumpHunter2D(histo, bkg_histo=bkg_histo)
-    print b.get_statistic()
+    best_p, best_center, best_width = b.get_best_bump()
+
+    print "P-value: %s" % best_p
+    print "Center: (%s, %s):" % (best_center[0]*BIN_SIZE, best_center[1]*BIN_SIZE)
+    print "Width: (%s, %s):" % (best_width[0]*BIN_SIZE, best_width[1]*BIN_SIZE)
 
     # Hang the program so the user can look at the output
     raw_input("Press enter to quit")

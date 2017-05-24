@@ -5,8 +5,10 @@ Author: Vyassa Baratham <vbaratham@berkeley.edu>
 """
 
 import math
+from itertools import product
+from operator import itemgetter
 
-from ROOT import TMath
+from ROOT import Math, TMath
 
 class BumpHunter(object):
     """
@@ -17,22 +19,22 @@ class BumpHunter(object):
     """
     WINDOW_DEF_RECTANGLE = "WINDOW_DEF_RECTANGLE"
     SIDEBAND_DEF_RECTANGLE = "SIDEBAND_DEF_RECTANGLE"
-    SIEBAND_DEF_NONE = "SIDEBAND_DEF_NONE"
+    SIDEBAND_DEF_NONE = "SIDEBAND_DEF_NONE"
 
-    
-    def integrate_histo_with_error(bins):
+    @classmethod
+    def integrate_histo_with_error(cls, histo, bins):
         """
         Add the given bins from self.histo and their errors, return both sums.
 
         bins - collection of Global bin numbers of bins to integrate
         """
         return (
-            sum(self.histo.GetBinContent(b) for b in bins),
-            math.sqrt(sum(self.histo.GetBinError(b)*self.histo.GetBinError(b) for b in bins))
+            sum(histo.GetBinContent(b) for b in bins),
+            math.sqrt(sum(histo.GetBinError(b)*histo.GetBinError(b) for b in bins))
         )
 
-
-    def mean_poisson_pval(d, b, b_error, conv_width=3, step_size=1):
+    @classmethod
+    def mean_poisson_pval(cls, d, b, b_error, conv_width=3, step_size=1):
         """
         Mostly transcribed from
         https://svnweb.cern.ch/trac/atlasoff/browser/Trigger/TrigFTK/SuPlot/trunk/src/bumphunter/StatisticsAnalysis.C
@@ -60,7 +62,7 @@ class BumpHunter(object):
         l = -conv_width
         while l <= conv_width:
             bcenter = max(0, b + l*b_error)
-            this_slice_weight = TMath.normal_cdf(l + 0.5*step_size) - TMath.normal_cdf(l - 0.5*step_size)
+            this_slice_weight = Math.normal_cdf(l + 0.5*step_size) - Math.normal_cdf(l - 0.5*step_size)
             this_pval = TMath.Gamma(d, bcenter) # Guaranteed to have d > b, so this is equivalent to StatisticsAnalysis.C:1710
             mean += this_pval*this_slice_weight
             total_weight += this_slice_weight
@@ -78,6 +80,7 @@ class BumpHunter2D(BumpHunter):
             window_def=BumpHunter.WINDOW_DEF_RECTANGLE,
             sideband_def=BumpHunter.SIDEBAND_DEF_RECTANGLE,
             sideband_req=1e-3,
+            deviation_from_sq=4,
     ):
         """
         histo - TH2 containing the data to analyze
@@ -86,11 +89,16 @@ class BumpHunter2D(BumpHunter):
         sideband_def - how to define the sideband shape (one of BumpHunter.SIDEBAND_DEF_*)
         sideband_req - the maximum pval for the sideband that we accept (higher: more
                        strict prohibition of excesses in the sideband relative to bkg)
+        deviation_from_sq - we use windows of width that are almost square (ie, xwidth = ywidth).
+                            This param indicates how far off we allow it to be
+                            (ie, the max abs(xwidth-ywidth))
         """
         self.histo = histo
         self.bkg_histo = bkg_histo or BumpHunter2D.bkg_histo(histo)
         self.window_def = window_def
         self.sideband_def = sideband_def
+        self.sideband_req = sideband_req
+        self.deviation_from_sq = deviation_from_sq
     
     def bkg_histo(data_histo):
         """
@@ -106,12 +114,39 @@ class BumpHunter2D(BumpHunter):
     def central_window_widths(self):
         """
         Return an iterable containing (x, y) tuples of central window widths to use.
-        Implements default behavior of [1, floor(N)] for each dimension
+        Implements default behavior of [1, floor(N/2)] for each dimension, then
+        skews each window by adding and subtracting each integer in
+        [1, self.deviation_from_sq) from the xwidth of each window, leaving ywidth
+        untouched, returning only those windows with width in [1, floor(N/2)].
+        To see why we do this, look at the following, which shows the main diagonal
+        (square windows) as X's, the "nearby" (slightly skewed windows) as 0's, and
+        far away (heavily skewed windows) as dots:
+
+          1 2 3 4 5 6 7 8 9
+          -----------------
+        1| X 0 0 0 . . . . .
+        2| 0 X 0 0 0 . . . .
+        3| 0 0 X 0 0 0 . . .
+        4| 0 0 0 X 0 0 0 . .
+        5| . 0 0 0 X 0 0 0 .
+        6| . . 0 0 0 X 0 0 0 
+        7| . . . 0 0 0 X 0 0
+        8| . . . . 0 0 0 X 0
+        9| . . . . . 0 0 0 X
+
         """
-        return zip(
-            xrange(1, math.floor(self.histo.GetNbinsX())),
-            xrange(1, math.floor(self.histo.GetNbinsY()))
-        )
+        max_x = int(math.floor(self.histo.GetNbinsX()/2))
+        max_y = int(math.floor(self.histo.GetNbinsY()/2))
+        for xwidth, ywidth in zip(
+            xrange(1, max_x),
+            xrange(1, max_y),
+        ):
+            yield (xwidth, ywidth)
+            for i in range(1, self.deviation_from_sq):
+                if xwidth - i >= 1:
+                    yield (xwidth - i, ywidth)
+                if xwidth + i <= max_x:
+                    yield (xwidth + i, ywidth)
 
 
     def central_window(self, center, width):
@@ -123,7 +158,7 @@ class BumpHunter2D(BumpHunter):
         width - (x, y) tuple of central window width
         """
         if self.window_def == BumpHunter.WINDOW_DEF_RECTANGLE:
-            return (
+            return tuple(
                 self.histo.GetBin(center[0] + x, center[1] + y)
                 for x in range(-width[0], width[0])
                 for y in range(-width[1], width[1])
@@ -143,7 +178,7 @@ class BumpHunter2D(BumpHunter):
 
         central_width - width of central window
         """
-        return tuple(max(1, math.floor(x/2)) for x in central_width)
+        return tuple(max(1, int(math.floor(x/2))) for x in central_width)
 
 
     def sideband(self, center, central_width, sideband_width, central_window):
@@ -161,7 +196,7 @@ class BumpHunter2D(BumpHunter):
                                       "non-rectangular central window")
         if self.sideband_def == BumpHunter.SIDEBAND_DEF_RECTANGLE:
             tot_width = central_width + sideband_width
-            return (
+            return tuple(
                 cell for cell in set(
                     self.histo.GetBin(center[0] + x, center[1] + y)
                     for x in range(-tot_width[0], tot_width[0])
@@ -179,20 +214,20 @@ class BumpHunter2D(BumpHunter):
         """
         Return the step size along each dimension to use for the given central width
         """
-        return tuple(max(1, math.floor(x/2)) for x in central_width)
+        return tuple(max(1, int(math.floor(x/2))) for x in central_width)
 
 
     def central_windows_and_sidebands(self, central_width, sideband_width):
         """
         Yield tuples of (center, central_window, sideband), where central_window
         and sideband are collections of Global bin numbers. Each window
-        must be defined so that the window+sieband is in the histogram.
+        must be defined so that the window+sideband is in the histogram.
         """
         minctr = central_width + sideband_width
-        maxctr = (self.histo.GetNbinsX(), self.histo.GetNbinsY()) - minctr
+        maxctr = (self.histo.GetNbinsX() - minctr[0], self.histo.GetNbinsY() - minctr[1])
         step_size = self.step_size(central_width)
-        for center in zip(range(minctr[0], maxctr[0], step_size[0]),
-                          range(minctr[1], maxctr[1], step_size[1])):
+        for center in product(range(minctr[0], maxctr[0], step_size[0]),
+                              range(minctr[1], maxctr[1], step_size[1])):
             central_window = self.central_window(center, central_width)
             sideband = self.sideband(center, central_width, sideband_width, central_window)
             yield (center, central_window, sideband)
@@ -202,33 +237,39 @@ class BumpHunter2D(BumpHunter):
         """
         Compute the BumpHunter test statistic
         """
-        return -math.log(min(self.pvals))
+        best_p, best_center, best_width = self.get_best_bump()
+        return -math.log(best_p)
+
+
+    def get_best_bump(self):
+        best_p, best_center, best_width = min(self.pvals(), key=itemgetter(0))
+        return best_p, best_center, best_width
 
 
     def pvals(self):
         """
         Iterate over widths and center locations, compute
         the background (null hypothesis),and calculate p-values for each. Yield the
-        ones that are interesting (a p-val is interesting if it is less than 1), along with their center and width
+        ones that are interesting (a p-val is interesting if it is less than 1),
+        along with their center and width
         """
         for central_width in self.central_window_widths():
             sideband_width = self.sideband_width(central_width)
             for center, central_window, sideband in self.central_windows_and_sidebands(central_width, sideband_width):
                 # At this point, central_window and sideband are collections of
                 # Global bin numbers
-                bkg_histo = self.bkg_histo #or self.bkg_histo(central_window, sideband)
 
                 # Integrate histograms over the central window and sidebands
                 # Note we will not be able to use TH2.Integrate() for non rectangular windows,
                 # so we don't bother using it here even though it would presumably be faster
                 dc, dc_error = BumpHunter.integrate_histo_with_error(self.histo, central_window)  # counts/error of data in the central window
-                bc, bc_error = BumpHunter.integrate_histo_with_error(bkg_histo, central_window)  # counts/error of bkg in the central window
+                bc, bc_error = BumpHunter.integrate_histo_with_error(self.bkg_histo, central_window)  # counts/error of bkg in the central window
                 ds, ds_error = BumpHunter.integrate_histo_with_error(self.histo, sideband)  # counts/error of data in the sideband
-                bs, bs_error = BumpHunter.integrate_histo_with_error(bkg_histo, sideband)  # counts/error of bkg in the sideband
+                bs, bs_error = BumpHunter.integrate_histo_with_error(self.bkg_histo, sideband)  # counts/error of bkg in the sideband
 
-                if bkg_central_window_sum == 0:
+                if bc == 0:
                     continue  # TODO: Is this necessary?
-                if data_central_window_sum <= bkg_central_window_sum:
+                if dc <= bc:
                     continue  # Not an excess
 
                 # TODO: implement deficit detection
@@ -242,5 +283,5 @@ class BumpHunter2D(BumpHunter):
                 # We return central_window_p, rather than eq (17) in
                 # arxiv.org/pdf/1101.0390.pdf, in light of the paragraph
                 # after that equation
-                yield central_window_p
+                yield central_window_p, center, central_width
 
