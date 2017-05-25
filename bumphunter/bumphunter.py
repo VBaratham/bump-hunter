@@ -15,7 +15,7 @@ class BumpHunter(object):
     Superclass for BumpHunters. Currently only contains static constants (enums that I'm
     too lazy to make into real enums) and helper functions. In the future, may contain an
     implementation of the 1D BumpHunter (or maybe that should go in a new class
-    BumpHunter1D, I'm not going to think too hard about it right now)
+    BumpHunter1D - I'm not going to think too hard about it right now)
     """
     WINDOW_DEF_RECTANGLE = "WINDOW_DEF_RECTANGLE"
     SIDEBAND_DEF_RECTANGLE = "SIDEBAND_DEF_RECTANGLE"
@@ -40,11 +40,13 @@ class BumpHunter(object):
         https://svnweb.cern.ch/trac/atlasoff/browser/Trigger/TrigFTK/SuPlot/trunk/src/bumphunter/StatisticsAnalysis.C
         (including the docstring)
 
-        Convolve a Gaussian (non-negative part) with a Poisson. Background is b+-deltaB, and
+        Convolve a Gaussian (non-negative part) with a Poisson. Background is b+-b_error, and
         we need the mean Poisson probability to observe at least d (if d >=b, else at most d), given this PDF for b.
         The way is to cut the PDF or b into segments, whose area is exactly calculable, take the
         Poisson probability at the center of each gaussian slice, and average the probabilities
         using the area of each slice as weight.
+
+        But here, currently, we are guaranteed to have d > b so some of this simplifies.
 
         d - data counts
         b - background counts
@@ -57,7 +59,7 @@ class BumpHunter(object):
         if b_error == 0:
             return TMath.Gamma(d, b) # Guaranteed to have d > b, so this is equivalent to commonFunctions.h:503
 
-        # TODO: Pythonify
+        # TODO: Pythonify the following
         mean, total_weight = 0.0, 0.0
         l = -conv_width
         while l <= conv_width:
@@ -84,7 +86,8 @@ class BumpHunter2D(BumpHunter):
     ):
         """
         histo - TH2 containing the data to analyze
-        bkg_histo - background histo (null hypothesis) to be used for all "psuedoexperiments"
+        bkg_histo - background histo (null hypothesis). If not specified, uses the result of
+                    BumpHunter2D.bkg_histo() as bkg_histo
         window_def - how to define the window shape (one of BumpHunter.WINDOW_DEF_*)
         sideband_def - how to define the sideband shape (one of BumpHunter.SIDEBAND_DEF_*)
         sideband_req - the maximum pval for the sideband that we accept (higher: more
@@ -103,8 +106,8 @@ class BumpHunter2D(BumpHunter):
     def bkg_histo(data_histo):
         """
         Return a histogram to be used as background (null hypothesis). When
-        Implemented, it should ideally use the process described
-        in sec 2.1.1 of arxiv.org/pdf/1101.0390.pdf, or in sec 8.1 of
+        Implemented, it should ideally use either the process described
+        in sec 2.1.1 of arxiv.org/pdf/1101.0390.pdf, or the one in sec 8.1 of
         https://cds.cern.ch/record/2151829/files/ATL-COM-PHYS-2016-471.pdf,
         or at least just fit an exponential to the data histo and fill a new histo
         with that distribution.
@@ -114,10 +117,10 @@ class BumpHunter2D(BumpHunter):
     def central_window_widths(self):
         """
         Return an iterable containing (x, y) tuples of central window widths to use.
-        Implements default behavior of [1, floor(N/2)] for each dimension, then
-        skews each window by adding and subtracting each integer in
+        Default behavior is to start with square windows, then
+        skew every window by adding and subtracting each integer in
         [1, self.deviation_from_sq) from the xwidth of each window, leaving ywidth
-        untouched, returning only those windows with width in [1, floor(N/2)].
+        untouched, returning only those windows with widths in [1, floor(N/2)].
         To see why we do this, look at the following, which shows the main diagonal
         (square windows) as X's, the "nearby" (slightly skewed windows) as 0's, and
         far away (heavily skewed windows) as dots:
@@ -135,6 +138,7 @@ class BumpHunter2D(BumpHunter):
         9| . . . . . 0 0 0 X
 
         """
+        # TODO: this could probably be prettier
         max_x = int(math.floor(self.histo.GetNbinsX()/2))
         max_y = int(math.floor(self.histo.GetNbinsY()/2))
         for xwidth, ywidth in zip(
@@ -153,6 +157,10 @@ class BumpHunter2D(BumpHunter):
         """
         Return a collection of Global bin numbers from self.histo within the window at position @center,
         with width @width. Exactly how the window is defined depends on self.window_def
+
+        # TODO URGENT: These Global bin numbers are also used to index into the bkg_histo, which
+        # does work, at least for the simple example in example/2d.py, but we might not want to
+        # rely on this behavior
 
         center - (x, y) tuple of central window coordinate
         width - (x, y) tuple of central window width
@@ -187,9 +195,9 @@ class BumpHunter2D(BumpHunter):
         to the sideband of a particular central window. Exactly how the sideband is
         defined depends on self.sideband_def
 
-        center -
-        central_width -
-        sideband_width - 
+        center - coordinates of the center of the window
+        central_width - x/y widths of the central window
+        sideband_width - x/y widths of the sideband
         """
         if self.sideband_def != BumpHunter.SIDEBAND_DEF_NONE and self.window_def != BumpHunter.WINDOW_DEF_RECTANGLE:
             raise NotImplementedError("Sidebands not yet implemented for "
