@@ -8,7 +8,7 @@ import math
 from itertools import product
 from operator import itemgetter
 
-from ROOT import Math, TMath, TF2
+from ROOT import Math, TMath, TH2F
 
 class BumpHunter(object):
     """
@@ -78,7 +78,8 @@ class BumpHunter2D(BumpHunter):
     def __init__(
             self,
             histo,
-            bkg_histo,
+            bkg_histo=None,
+            fit_fcn=None,
             window_def=BumpHunter.WINDOW_DEF_RECTANGLE,
             sideband_def=BumpHunter.SIDEBAND_DEF_RECTANGLE,
             sideband_req=1e-3,
@@ -87,20 +88,48 @@ class BumpHunter2D(BumpHunter):
         """
         histo - TH2 containing the data to analyze
         bkg_histo - background histo (null hypothesis)
+        fit_fcn - function to use for fitting to estimate background
         window_def - how to define the window shape (one of BumpHunter.WINDOW_DEF_*)
         sideband_def - how to define the sideband shape (one of BumpHunter.SIDEBAND_DEF_*)
         sideband_req - the maximum pval for the sideband that we accept (higher: more
                        strict prohibition of excesses in the sideband relative to bkg)
-        deviation_from_sq - we use windows of width that are almost square (ie, xwidth = ywidth).
+        deviation_from_sq - we use windows that are almost square (ie, xwidth = ywidth).
                             This param indicates how far off we allow it to be
                             (ie, the max abs(xwidth-ywidth))
         """
+        assert (bkg_histo or fit_fcn), "Need to supply bkg_histo or fit_fcn"
+        
         self.histo = histo
-        self.bkg_histo = bkg_histo
+        self.bkg_histo = bkg_histo or BumpHunter2D.make_bkg_histo(histo, fit_fcn)
+        self.fit_fcn = fit_fcn
         self.window_def = window_def
         self.sideband_def = sideband_def
         self.sideband_req = sideband_req
         self.deviation_from_sq = deviation_from_sq
+        self.best_p = None
+        self.best_center = None
+        self.best_width = None
+        self.t = None  # test statistic for the data
+        self.pseudoexperiments_t = []  # list of test statistics for pseudoexperiments
+
+
+    @classmethod
+    def make_bkg_histo(cls, data_histo, fit_fcn):
+        """
+        Return a histogram to be used as background (null hypothesis). Fits
+        a decaying exponential to the data and returns a histogram representing
+        the fit.
+        Eventually it should ideally use either the process described
+        in sec 2.1.1 of arxiv.org/pdf/1101.0390.pdf, or the one in sec 8.1 of
+        https://cds.cern.ch/record/2151829/files/ATL-COM-PHYS-2016-471.pdf
+
+        data_histo - histogram of data to fit
+        """
+        fit = data_histo.Fit(fit_fcn)
+        bkg_histo = fit_fcn.CreateHistogram()
+        # TODO: set title, axis labels, etc.
+
+        return bkg_histo
 
 
     def window_widths(self):
@@ -227,17 +256,15 @@ class BumpHunter2D(BumpHunter):
             yield (center, window, sideband)
 
 
-    def get_statistic(self):
-        """
-        Compute the BumpHunter test statistic
-        """
-        best_p, best_center, best_width = self.get_best_bump()
-        return -math.log(best_p)
-
-
     def get_best_bump(self):
+        """
+        Compute and store the BumpHunter test statistic
+        """
         best_p, best_center, best_width = min(self.pvals(), key=itemgetter(0))
-        return best_p, best_center, best_width
+        t = -math.log(best_p)
+        self.best_p, self.best_center, self.best_width = best_p, best_center, best_width
+        self.t = t
+        return t, best_p, best_center, best_width
 
 
     def pvals(self):
@@ -284,4 +311,68 @@ class BumpHunter2D(BumpHunter):
                 # after that equation
                 yield window_p, center, window_width
 
-                
+
+    def pseudoexperiments(self, n, fcn=None, reset=False, progress_out=None):
+        """
+        Run n pseudoexperiments: generate fake data according to the distribution in
+        bkg_histo, run Bumphunter (including re-fitting and re-generating a new bkg_histo),
+        store the test statistics. Finally, if the data's test statistic has already been
+        computed, calculate the probability of observing the data's test statistic, and
+        return it, otherwise return None.
+
+        n - number of pseudoexperiments to run
+        fcn - TH2 to use for fitting
+        reset - if True, clears all stored test statistics from previous pseudoexperiments
+        progress_out - stream to write progress updates
+        """
+        fit_fcn = self.fit_fcn or fcn
+
+        assert fit_fcn, "If BumpHunter is instantiated w/o param fit_fcn, a TH2 "\
+            "must be passed to pseudoexperiment()"
+
+        if reset:
+            self.pseudoexperiments_t = []
+
+        progress_str = "Done pseudoexperiment %%%ss, t = %%s" % len(str(n))
+            
+        for i in range(n):
+            t = self.one_pseudoexperiment(fit_fcn)
+            self.pseudoexperiments_t.append(t)
+            print >>progress_out, progress_str % (i+1, t)
+
+        if self.t is not None:
+            return self.final_pval()
+
+            
+    def one_pseudoexperiment(self, fit_fcn):
+        """
+        Run one pseudoexperiment, return test statistic
+        """
+        h = self.histo # alias for shortening the following
+        pseudo_histo = TH2F(
+            "pseudodata", "2D BumpHunter pseudoexperiment",
+            h.GetNbinsX(), h.GetXaxis().GetXmin(), h.GetXaxis().GetXmax(),
+            h.GetNbinsY(), h.GetYaxis().GetXmin(), h.GetYaxis().GetXmax(),
+        )
+        pseudo_histo.FillRandom(self.bkg_histo, h.Integral())
+
+        bh = BumpHunter2D(pseudo_histo, fit_fcn=fit_fcn)
+
+        return bh.get_best_bump()[0]
+
+
+    def final_pval(self):
+        """
+        Compute the final p-value comparing this data's test statistic to pseudoexperiments.
+        According to the line after (4) in arxiv.org/pdf/1101.0390.pdf, this is just s/n
+        """
+        assert self.t, "Cannot call final_pval() before get_best_bump()"
+        assert self.pseudoexperiments, "Cannot call final_pval() before pseudoexperiments()"
+
+        n = float(len(self.pseudoexperiments_t))
+        s = float(len([t for t in self.pseudoexperiments_t if t >= self.t]))
+
+        p = s/n
+        err = math.sqrt(p * (1.0 - p)/n)
+
+        return p, err
