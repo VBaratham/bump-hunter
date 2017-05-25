@@ -4,7 +4,7 @@ runs 2d bumphunter, and shows results in ROOT windows
 """
 
 import math
-from ROOT import TH2F, TRandom3, TCanvas
+from ROOT import TH2F, TF2, TRandom3, TCanvas
 
 NUM_BINS = 40  # per dimension
 BIN_SIZE = 0.5 # square bins for simplicity
@@ -15,6 +15,8 @@ SIG_CENTER_X = 5
 SIG_CENTER_Y = 12
 SIG_SPREAD_X = .7
 SIG_SPREAD_Y = .2
+NUM_PSEUDOEXPERIMENTS = 10
+
 
 def make_histo(title, include_signal=True):
     """
@@ -38,6 +40,41 @@ def make_histo(title, include_signal=True):
 
     return histo
 
+
+def make_bkg_histo(data_histo):
+    """
+    Return a histogram to be used as background (null hypothesis). Fits
+    a decaying exponential to the data and returns a histogram representing
+    the fit.
+    Eventually it should ideally use either the process described
+    in sec 2.1.1 of arxiv.org/pdf/1101.0390.pdf, or the one in sec 8.1 of
+    https://cds.cern.ch/record/2151829/files/ATL-COM-PHYS-2016-471.pdf
+
+    data_histo - histogram of data to fit
+    """
+
+    fit_fcn = TF2(
+        "expo2", "[0]*exp(-[1] - [2]*x - [3]*y)",
+        data_histo.GetXaxis().GetXmin(),
+        data_histo.GetXaxis().GetXmax(),
+        data_histo.GetYaxis().GetXmin(),
+        data_histo.GetYaxis().GetXmax(),
+    )
+    fit_fcn.SetNpx(data_histo.GetNbinsX())
+    fit_fcn.SetNpy(data_histo.GetNbinsY())
+
+    fit_fcn.SetParameter(0, 1000)
+    fit_fcn.SetParameter(1, 1)
+    fit_fcn.SetParameter(2, 0.2)
+    fit_fcn.SetParameter(3, 0.2)
+
+    fit = data_histo.Fit(fit_fcn)
+    bkg_histo = fit_fcn.CreateHistogram()
+    # TODO: set title, axis labels, etc.
+
+    return bkg_histo
+
+
 if __name__ == '__main__':
     histo = make_histo('signal')
     # histo.Draw("LEGO2")
@@ -46,8 +83,11 @@ if __name__ == '__main__':
     # c2 = TCanvas('c2')
     # bkg_histo.Draw("LEGO2")
 
+    bkg_histo = make_bkg_histo(histo)
+
     from bumphunter import BumpHunter2D
-    bh = BumpHunter2D(histo)
+    bh = BumpHunter2D(histo, bkg_histo)
+
     c2 = TCanvas("c2")
     bh.histo.Draw("LEGO2 HIST")
     c3 = TCanvas("c3")
@@ -55,10 +95,15 @@ if __name__ == '__main__':
 
     best_p, best_center, best_width = bh.get_best_bump()
 
+    print "Ran 1 BumpHunter on the test data:"
+    print "----------------------------------"
     print "P-value: %s" % best_p
     print "test statistic t = %s" % -math.log(best_p)
     print "Center: (%s, %s):" % (best_center[0]*BIN_SIZE, best_center[1]*BIN_SIZE)
     print "Width: (%s, %s):" % (best_width[0]*BIN_SIZE, best_width[1]*BIN_SIZE)
+
+    print "Running %s pseudoexperiments..." % NUM_PSEUDOEXPERIMENTS    # TODO
+
 
     # Hang the program so the user can look at the output
     raw_input("Press enter to quit")

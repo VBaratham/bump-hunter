@@ -78,7 +78,7 @@ class BumpHunter2D(BumpHunter):
     def __init__(
             self,
             histo,
-            bkg_histo=None,
+            bkg_histo,
             window_def=BumpHunter.WINDOW_DEF_RECTANGLE,
             sideband_def=BumpHunter.SIDEBAND_DEF_RECTANGLE,
             sideband_req=1e-3,
@@ -86,8 +86,7 @@ class BumpHunter2D(BumpHunter):
     ):
         """
         histo - TH2 containing the data to analyze
-        bkg_histo - background histo (null hypothesis). If not specified, uses the result of
-                    BumpHunter2D.bkg_histo() as bkg_histo
+        bkg_histo - background histo (null hypothesis)
         window_def - how to define the window shape (one of BumpHunter.WINDOW_DEF_*)
         sideband_def - how to define the sideband shape (one of BumpHunter.SIDEBAND_DEF_*)
         sideband_req - the maximum pval for the sideband that we accept (higher: more
@@ -97,42 +96,11 @@ class BumpHunter2D(BumpHunter):
                             (ie, the max abs(xwidth-ywidth))
         """
         self.histo = histo
-        self.bkg_histo = bkg_histo or BumpHunter2D.bkg_histo(histo)
+        self.bkg_histo = bkg_histo
         self.window_def = window_def
         self.sideband_def = sideband_def
         self.sideband_req = sideband_req
         self.deviation_from_sq = deviation_from_sq
-
-
-    @classmethod
-    def bkg_histo(cls, data_histo):
-        """
-        Return a histogram to be used as background (null hypothesis). Fits
-        a decaying exponential to the data and returns a histogram representing
-        the fit.
-        Eventually it should ideally use either the process described
-        in sec 2.1.1 of arxiv.org/pdf/1101.0390.pdf, or the one in sec 8.1 of
-        https://cds.cern.ch/record/2151829/files/ATL-COM-PHYS-2016-471.pdf
-        """
-        fcn = TF2(
-            "expo2", "[0]*exp(-[1] - [2]*x - [3]*y)",
-            data_histo.GetXaxis().GetXmin(),
-            data_histo.GetXaxis().GetXmax(),
-            data_histo.GetYaxis().GetXmin(),
-            data_histo.GetYaxis().GetXmax(),
-        )
-        fcn.SetNpx(data_histo.GetNbinsX())
-        fcn.SetNpy(data_histo.GetNbinsY())
-        fcn.SetParameter(0, 1000)
-        fcn.SetParameter(1, 1)
-        fcn.SetParameter(2, 0.2)
-        fcn.SetParameter(3, 0.2)
-        
-        fit = data_histo.Fit(fcn)
-        bkg_histo = fcn.CreateHistogram()
-        # TODO: set title, axis labels, etc.
-
-        return bkg_histo
 
 
     def window_widths(self):
@@ -316,3 +284,4 @@ class BumpHunter2D(BumpHunter):
                 # after that equation
                 yield window_p, center, window_width
 
+                
