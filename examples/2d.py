@@ -3,6 +3,7 @@ Creates a 2d histogram consisting of a Gaussian signal and exponentially decayin
 runs 2d bumphunter, and shows results in ROOT windows
 """
 
+import math
 from ROOT import TH2F, TRandom3, TCanvas
 
 NUM_BINS = 40  # per dimension
@@ -12,7 +13,7 @@ NUM_SIG_EVENTS = 300
 BKG_MEAN = 8
 SIG_CENTER_X = 5
 SIG_CENTER_Y = 12
-SIG_SPREAD_X = .5
+SIG_SPREAD_X = .7
 SIG_SPREAD_Y = .2
 
 def make_histo(title, include_signal=True):
@@ -39,19 +40,23 @@ def make_histo(title, include_signal=True):
 
 if __name__ == '__main__':
     histo = make_histo('signal')
-    histo.Draw("LEGO2")
+    # histo.Draw("LEGO2")
 
-    # The current behavior of BumpHunter2D.bkg_histo() is stupid,
-    # so create a background histo to pass in
-    bkg_histo = make_histo('bkg', include_signal=False)
-    c2 = TCanvas('c2')
-    bkg_histo.Draw("LEGO2")
+    # bkg_histo = make_histo('bkg', include_signal=False)
+    # c2 = TCanvas('c2')
+    # bkg_histo.Draw("LEGO2")
 
     from bumphunter import BumpHunter2D
-    b = BumpHunter2D(histo, bkg_histo=bkg_histo)
-    best_p, best_center, best_width = b.get_best_bump()
+    bh = BumpHunter2D(histo)
+    c2 = TCanvas("c2")
+    bh.histo.Draw("LEGO2 HIST")
+    c3 = TCanvas("c3")
+    bh.bkg_histo.Draw("LEGO2 HIST")
+
+    best_p, best_center, best_width = bh.get_best_bump()
 
     print "P-value: %s" % best_p
+    print "test statistic t = %s" % -math.log(best_p)
     print "Center: (%s, %s):" % (best_center[0]*BIN_SIZE, best_center[1]*BIN_SIZE)
     print "Width: (%s, %s):" % (best_width[0]*BIN_SIZE, best_width[1]*BIN_SIZE)
 
