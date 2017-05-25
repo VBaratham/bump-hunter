@@ -112,9 +112,7 @@ class BumpHunter2D(BumpHunter):
         the fit.
         Eventually it should ideally use either the process described
         in sec 2.1.1 of arxiv.org/pdf/1101.0390.pdf, or the one in sec 8.1 of
-        https://cds.cern.ch/record/2151829/files/ATL-COM-PHYS-2016-471.pdf,
-        or at least just fit an exponential to the data histo and fill a new histo
-        with that distribution.
+        https://cds.cern.ch/record/2151829/files/ATL-COM-PHYS-2016-471.pdf
         """
         fcn = TF2(
             "expo2", "[0]*exp(-[1] - [2]*x - [3]*y)",
