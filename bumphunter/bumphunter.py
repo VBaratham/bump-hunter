@@ -41,7 +41,8 @@ class BumpHunter(object):
         (including the docstring)
 
         Convolve a Gaussian (non-negative part) with a Poisson. Background is b+-b_error, and
-        we need the mean Poisson probability to observe at least d (if d >=b, else at most d), given this PDF for b.
+        we need the mean Poisson probability to observe at least d (if d >=b, else at most d),
+        given this PDF for b.
         The way is to cut the PDF or b into segments, whose area is exactly calculable, take the
         Poisson probability at the center of each gaussian slice, and average the probabilities
         using the area of each slice as weight.
@@ -78,8 +79,8 @@ class BumpHunter2D(BumpHunter):
     def __init__(
             self,
             histo,
-            bkg_histo=None,
             fit_fcn=None,
+            bkg_histo=None,
             window_def=BumpHunter.WINDOW_DEF_RECTANGLE,
             sideband_def=BumpHunter.SIDEBAND_DEF_RECTANGLE,
             sideband_req=1e-3,
@@ -125,7 +126,7 @@ class BumpHunter2D(BumpHunter):
 
         data_histo - histogram of data to fit
         """
-        fit = data_histo.Fit(fit_fcn)
+        fit = data_histo.Fit(fit_fcn, 'q') # 'q' = quiet (no output)
         bkg_histo = fit_fcn.CreateHistogram()
         # TODO: set title, axis labels, etc.
 

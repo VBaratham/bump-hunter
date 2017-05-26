@@ -4,26 +4,22 @@ runs 2d bumphunter, and shows results in ROOT windows
 """
 
 import sys
+import argparse
 import math
-from ROOT import TH2F, TF2, TRandom3, TCanvas
+from datetime import datetime
 
-NUM_BINS = 40  # per dimension
-BIN_SIZE = 0.5 # square bins for simplicity
-NUM_BKG_EVENTS = 100000
-NUM_SIG_EVENTS = 100
-BKG_MEAN = 8
-SIG_CENTER_X = 5
-SIG_CENTER_Y = 12
-SIG_SPREAD_X = .5
-SIG_SPREAD_Y = .2
-NUM_PSEUDOEXPERIMENTS = 10
+from ROOT import TH2F, TF2, TRandom3, TCanvas, TFile
+
+from bumphunter.bumphunter import BumpHunter2D
+from bumphunter.utils import MultiOutstream
 
 
-def make_histo(title, include_signal=True):
+def make_histo(title, args, include_signal=True):
     """
     Make and return a histogram describe by the above parameters
     """
-    histo = TH2F(title, "2D BumpHunter Test %s" % title, NUM_BINS, 0, NUM_BINS*BIN_SIZE, NUM_BINS, 0, NUM_BINS*BIN_SIZE)
+    histo = TH2F(title, "2D BumpHunter Test %s" % title, args.nbins, 0,
+                 args.nbins*args.binsize, args.nbins, 0, args.nbins*args.binsize)
     histo.GetXaxis().SetTitle("X")
     histo.GetXaxis().SetTitleOffset(2)
     histo.GetYaxis().SetTitle("Y")
@@ -31,25 +27,18 @@ def make_histo(title, include_signal=True):
     
     rnd = TRandom3()
     rnd.SetSeed(0)
-    for i in range(NUM_BKG_EVENTS):
-        histo.Fill(rnd.Exp(BKG_MEAN), rnd.Exp(BKG_MEAN))
+    for i in range(args.nbkg):
+        histo.Fill(rnd.Exp(args.bkg_mean), rnd.Exp(args.bkg_mean))
     if include_signal:
-        for i in range(NUM_SIG_EVENTS):
-            x, y = rnd.Gaus(SIG_CENTER_X, SIG_SPREAD_X), rnd.Gaus(SIG_CENTER_Y, SIG_SPREAD_Y)
+        for i in range(args.nsig):
+            x, y = rnd.Gaus(args.sig_x, args.sig_spread_x), rnd.Gaus(args.sig_y, args.sig_spread_y)
             # print x, y
             histo.Fill(x, y)
 
     return histo
 
 
-if __name__ == '__main__':
-    histo = make_histo('signal')
-    # histo.Draw("LEGO2")
-
-    # bkg_histo = make_histo('bkg', include_signal=False)
-    # c2 = TCanvas('c2')
-    # bkg_histo.Draw("LEGO2")
-
+def get_fit_fcn(histo):
     fit_fcn = TF2(
         "expo2", "[0]*exp(-[1] - [2]*x - [3]*y)",
         histo.GetXaxis().GetXmin(),
@@ -65,29 +54,78 @@ if __name__ == '__main__':
     fit_fcn.SetParameter(2, 0.2)
     fit_fcn.SetParameter(3, 0.2)
 
-    from bumphunter import BumpHunter2D
-    bh = BumpHunter2D(histo, fit_fcn=fit_fcn)
+    return fit_fcn
+
+
+def main(args):
+    timestamp = datetime.now().isoformat()
+
+    histo = make_histo('signal', args, include_signal=True)
+    bh = BumpHunter2D(histo, fit_fcn=get_fit_fcn(histo))
+
+    f = TFile("runs/%s.root" % timestamp, "NEW")
 
     c2 = TCanvas("c2")
     bh.histo.Draw("LEGO2 HIST")
+    bh.histo.Write()
     c3 = TCanvas("c3")
     bh.bkg_histo.Draw("LEGO2 HIST")
+    bh.bkg_histo.Write()
 
-    t, best_p, best_center, best_width = bh.get_best_bump()
+    f.Close()
 
-    print "Ran 1 BumpHunter on the test data:"
-    print "----------------------------------"
-    print "P-value: p = %s" % best_p
-    print "test statistic: t = %s" % t
-    print "Center: (%s, %s):" % (best_center[0]*BIN_SIZE, best_center[1]*BIN_SIZE)
-    print "Width: (%s, %s):" % (best_width[0]*BIN_SIZE, best_width[1]*BIN_SIZE)
+    with open("runs/%s.stdout" % timestamp, "w") as outfile:
+        out = MultiOutstream(sys.stdout, outfile)
 
-    print "Running %s pseudoexperiments..." % NUM_PSEUDOEXPERIMENTS
-    bh.pseudoexperiments(NUM_PSEUDOEXPERIMENTS, progress_out=sys.stdout)
-    with open('pseudoexperiments_t.txt', 'w') as out:
-        print >>out, '\n'.join(str(t) for t in bh.pseudoexperiments_t)
-    final_pval, err = bh.final_pval()
-    print "Final p-value: p = %s \pm %s" % (final_pval, err)
+        import json
+        print >>out, json.dumps(args.__dict__, indent=4, sort_keys=True)
+
+        print >>out, "\nRunning BumpHunter on test data..."
+
+        t, best_p, best_center, best_width = bh.get_best_bump()
+
+        print >>out, "Done"
+        print >>out, "----------------------------------"
+        # print "P-value: p = %s" % best_p # this is not very meaningful
+        print >>out, "test statistic: t = %s" % t
+        print >>out, "Center: (%s, %s):" % (best_center[0]*args.binsize, best_center[1]*args.binsize)
+        print >>out, "Width: (%s, %s):" % (best_width[0]*args.binsize, best_width[1]*args.binsize)
+        print >>out, ""
+        print >>out, "Running %s pseudoexperiments..." % args.num_pseudo
+        print >>out, ""
+
+        bh.pseudoexperiments(args.num_pseudo, progress_out=out)
+        final_pval, err = bh.final_pval()
+
+        print >>out, ""
+        print >>out, "Final p-value: p = %s \pm %s" % (final_pval, err)
 
     # Hang the program so the user can look at the output
     raw_input("Press enter to quit")
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Run BumpHunter on randomly generated 2D data")
+    parser.add_argument('--nbkg', type=int, default=100000,
+                        help='Number of background events to generate')
+    parser.add_argument('--nsig', type=int, default=200,
+                        help='Number of signal events to generate')
+    parser.add_argument('--nbins', type=int, default=40,
+                        help='Number of bins along each dimension')
+    parser.add_argument('--binsize', type=float, default=0.5,
+                        help='Size of each bin along each dimension')
+    parser.add_argument('--bkg-mean', type=float, default=8,
+                        help='Mean of background exponential distribution')
+    parser.add_argument('--sig-x', type=float, default=5,
+                        help='x position of signal peak')
+    parser.add_argument('--sig-y', type=float, default=12,
+                        help='y position of signal peak')
+    parser.add_argument('--sig-spread-x', type=float, default=.6,
+                        help='stdev along x axis of signal peak')
+    parser.add_argument('--sig-spread-y', type=float, default=.2,
+                        help='stdev along y axis of signal peak')
+    parser.add_argument('--num-pseudo', type=int, default=10,
+                        help='number of pseudoexperiments to run to estimate final p-val')
+
+    args = parser.parse_args()
+    main(args)
