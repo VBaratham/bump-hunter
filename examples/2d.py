@@ -38,6 +38,32 @@ def make_histo(title, args, include_signal=True):
     return histo
 
 
+def make_histo_1d(title, args, include_signal=True):
+    """
+    Make and return a 1D TH2F. All the data will have a y coordinate of args.binsize/2.0
+    (to keep the data in the first bin)
+    but the fit needs at least 4 points in y, so we make it 4 bins wide along y
+    """
+    histo = TH2F(title, "1D BumpHunter2D Test %s" % title, args.nbins, 0,
+                 args.nbins*args.binsize, 4, 0, 4*args.binsize)
+    histo.GetXaxis().SetTitle("X")
+    histo.GetXaxis().SetTitleOffset(2)
+    histo.GetYaxis().SetTitle("Y")
+    histo.GetYaxis().SetTitleOffset(2)
+    
+    rnd = TRandom3()
+    rnd.SetSeed(0)
+    for i in range(args.nbkg):
+        histo.Fill(rnd.Exp(args.bkg_mean), args.binsize/2.0)
+    if include_signal:
+        for i in range(args.nsig):
+            x, y = rnd.Gaus(args.sig_x, args.sig_spread_x), args.binsize/2.0
+            # print x, y
+            histo.Fill(x, y)
+
+    return histo
+
+
 def get_fit_fcn(histo):
     fit_fcn = TF2(
         "expo2", "[0]*exp(-[1] - [2]*x - [3]*y)",
@@ -57,11 +83,31 @@ def get_fit_fcn(histo):
     return fit_fcn
 
 
+def get_fit_fcn_1d(histo):
+    fit_fcn = TF2(
+        "expo1", "[0]*exp(-[1] - [2]*x + 0*y)",
+        histo.GetXaxis().GetXmin(),
+        histo.GetXaxis().GetXmax(),
+        histo.GetYaxis().GetXmin(),
+        histo.GetYaxis().GetXmax(),
+    )
+    fit_fcn.SetNpx(histo.GetNbinsX())
+    fit_fcn.SetNpy(histo.GetNbinsY())
+
+    fit_fcn.SetParameter(0, 1000)
+    fit_fcn.SetParameter(1, 1)
+    fit_fcn.SetParameter(2, 0.2)
+
+    return fit_fcn
+
+
 def main(args):
     timestamp = datetime.now().isoformat()
 
-    histo = make_histo('signal', args, include_signal=True)
-    bh = BumpHunter2D(histo, fit_fcn=get_fit_fcn(histo))
+    # histo = make_histo('signal', args, include_signal=True)
+    # bh = BumpHunter2D(histo, fit_fcn=get_fit_fcn(histo))
+    histo = make_histo_1d('signal', args, include_signal=True)
+    bh = BumpHunter2D(histo, fit_fcn=get_fit_fcn_1d(histo))
 
     f = TFile("runs/%s.root" % timestamp, "NEW")
 
@@ -71,6 +117,8 @@ def main(args):
     c3 = TCanvas("c3")
     bh.bkg_histo.Draw("LEGO2 HIST")
     bh.bkg_histo.Write()
+
+    import pdb; pdb.set_trace()
 
     f.Close()
 

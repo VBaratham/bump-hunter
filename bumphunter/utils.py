@@ -1,4 +1,4 @@
-class MultiOutstream:
+class MultiOutstream(object):
     def __init__(self, *streams):
         self.streams = streams
 

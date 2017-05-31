@@ -6,7 +6,7 @@ Author: Vyassa Baratham <vbaratham@berkeley.edu>
 
 import math
 from itertools import product
-from operator import itemgetter
+from operator import add, itemgetter
 
 from ROOT import Math, TMath, TH2F
 
@@ -19,6 +19,8 @@ class BumpHunter(object):
     """
     WINDOW_DEF_RECTANGLE = "WINDOW_DEF_RECTANGLE"
     SIDEBAND_DEF_RECTANGLE = "SIDEBAND_DEF_RECTANGLE"
+    SIDEBAND_DEF_X_ONLY = "SIDEBAND_DEF_X_ONLY"
+    SIDEBAND_DEF_Y_ONLY = "SIDEBAND_DEF_Y_ONLY"
     SIDEBAND_DEF_NONE = "SIDEBAND_DEF_NONE"
 
     @classmethod
@@ -85,6 +87,8 @@ class BumpHunter2D(BumpHunter):
             sideband_def=BumpHunter.SIDEBAND_DEF_RECTANGLE,
             sideband_req=1e-3,
             deviation_from_sq=4,
+            allow_oob_x=False,
+            allow_oob_y=False
     ):
         """
         histo - TH2 containing the data to analyze
@@ -97,6 +101,8 @@ class BumpHunter2D(BumpHunter):
         deviation_from_sq - we use windows that are almost square (ie, xwidth = ywidth).
                             This param indicates how far off we allow it to be
                             (ie, the max abs(xwidth-ywidth))
+        allow_oob_{x,y} - if True, the sideband is allowed to be partially/completely
+                          out of the histogram bounds in the {x,y} dimension
         """
         assert (bkg_histo or fit_fcn), "Need to supply bkg_histo or fit_fcn"
         
@@ -107,6 +113,9 @@ class BumpHunter2D(BumpHunter):
         self.sideband_def = sideband_def
         self.sideband_req = sideband_req
         self.deviation_from_sq = deviation_from_sq
+        self.allow_oob_x = allow_oob_x
+        self.allow_oob_y = allow_oob_y
+        
         self.best_p = None
         self.best_center = None
         self.best_width = None
@@ -155,10 +164,7 @@ class BumpHunter2D(BumpHunter):
         7| . . . 0 0 0 X 0 0
         8| . . . . 0 0 0 X 0
         9| . . . . . 0 0 0 X
-
-        # TODO: allow skewing further in one direction than the other
         """
-        # TODO: this could probably be prettier
         max_x = int(math.floor(self.histo.GetNbinsX()/2))
         max_y = int(math.floor(self.histo.GetNbinsY()/2))
         for xwidth, ywidth in zip(
@@ -219,7 +225,7 @@ class BumpHunter2D(BumpHunter):
             raise NotImplementedError("Sidebands not yet implemented for "
                                       "non-rectangular central window")
         if self.sideband_def == BumpHunter.SIDEBAND_DEF_RECTANGLE:
-            tot_width = window_width + sideband_width
+            tot_width = tuple(map(add, window_width, sideband_width))
             return tuple(
                 cell for cell in set(
                     (center[0] + x, center[1] + y)
@@ -245,10 +251,20 @@ class BumpHunter2D(BumpHunter):
         """
         Yield tuples of (center, window, sideband), where window
         and sideband are collections of (binx, biny) tuples. Each window
-        must be defined so that the window+sideband is in the histogram.
+        must be defined so that the window+sideband is in the histogram, unless
+        self.allow_oob_x/y is True, in which case the sideband may be partially or
+        completely out of bounds.
         """
-        minctr = window_width + sideband_width
-        maxctr = (self.histo.GetNbinsX() - minctr[0], self.histo.GetNbinsY() - minctr[1])
+        minctr = list(map(add, window_width, sideband_width))
+        maxctr = list((self.histo.GetNbinsX() - minctr[0], self.histo.GetNbinsY() - minctr[1]))
+
+        if self.allow_oob_x:
+            minctr[0] -= sideband_width[0]
+            maxctr[0] += sideband_width[0]
+        if self.allow_oob_y:
+            minctr[1] -= sideband_width[1]
+            maxctr[1] += sideband_width[1]
+
         step_size = self.step_size(window_width)
         for center in product(range(minctr[0], maxctr[0], step_size[0]),
                               range(minctr[1], maxctr[1], step_size[1])):
@@ -257,18 +273,20 @@ class BumpHunter2D(BumpHunter):
             yield (center, window, sideband)
 
 
-    def get_best_bump(self):
+    def get_best_bump(self, histo=None):
         """
         Compute and store the BumpHunter test statistic
+
+        pvals - optional TH1 to store pvals for each window
         """
-        best_p, best_center, best_width = min(self.pvals(), key=itemgetter(0))
+        best_p, best_center, best_width = min(self.pvals(histo), key=itemgetter(0))
         t = -math.log(best_p)
         self.best_p, self.best_center, self.best_width = best_p, best_center, best_width
         self.t = t
         return t, best_p, best_center, best_width
 
 
-    def pvals(self):
+    def pvals(self, histo=None):
         """
         Iterate over widths and center locations, compute
         the background (null hypothesis),and calculate p-values for each. Yield the
@@ -302,10 +320,15 @@ class BumpHunter2D(BumpHunter):
                 # TODO: implement deficit detection
 
                 window_p = BumpHunter.mean_poisson_pval(dc, bc, bc_error)
-                sideband_p = BumpHunter.mean_poisson_pval(ds, bs, bs_error) # TODO: check if we are not using sidebands
 
-                if sideband_p < self.sideband_req:
-                    continue
+                if self.sideband_def != BumpHunter.SIDEBAND_DEF_NONE:
+                    sideband_p = BumpHunter.mean_poisson_pval(ds, bs, bs_error)
+
+                    if sideband_p < self.sideband_req:
+                        continue
+
+                if histo:
+                    histo.Fill(window_p)
 
                 # We return window_p, rather than eq (17) in
                 # arxiv.org/pdf/1101.0390.pdf, in light of the paragraph
@@ -361,7 +384,7 @@ class BumpHunter2D(BumpHunter):
 
         return bh.get_best_bump()[0]
 
-
+    
     def final_pval(self):
         """
         Compute the final p-value comparing this data's test statistic to pseudoexperiments.
