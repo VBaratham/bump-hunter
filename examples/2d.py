@@ -104,10 +104,8 @@ def get_fit_fcn_1d(histo):
 def main(args):
     timestamp = datetime.now().isoformat()
 
-    # histo = make_histo('signal', args, include_signal=True)
-    # bh = BumpHunter2D(histo, fit_fcn=get_fit_fcn(histo))
-    histo = make_histo_1d('signal', args, include_signal=True)
-    bh = BumpHunter2D(histo, fit_fcn=get_fit_fcn_1d(histo))
+    histo = make_histo('signal', args, include_signal=True)
+    bh = BumpHunter2D(histo, fit_fcn=get_fit_fcn(histo))
 
     f = TFile("runs/%s.root" % timestamp, "NEW")
 
@@ -117,8 +115,6 @@ def main(args):
     c3 = TCanvas("c3")
     bh.bkg_histo.Draw("LEGO2 HIST")
     bh.bkg_histo.Write()
-
-    import pdb; pdb.set_trace()
 
     f.Close()
 
@@ -136,7 +132,8 @@ def main(args):
         print >>out, "----------------------------------"
         # print "P-value: p = %s" % best_p # this is not very meaningful
         print >>out, "test statistic: t = %s" % t
-        print >>out, "Center: (%s, %s):" % (best_center[0]*args.binsize, best_center[1]*args.binsize)
+        print >>out, "Center: (%s, %s):" % ( (best_center[0] - 1) * args.binsize,
+                                             (best_center[1] - 1) * args.binsize )
         print >>out, "Width: (%s, %s):" % (best_width[0]*args.binsize, best_width[1]*args.binsize)
         print >>out, ""
         print >>out, "Running %s pseudoexperiments..." % args.num_pseudo
