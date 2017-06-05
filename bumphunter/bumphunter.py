@@ -52,10 +52,11 @@ class BumpHunterConfig(object):
 
 class BumpHunter(object):
     """
-    Superclass for BumpHunters. Currently only contains static constants (enums that I'm
-    too lazy to make into real enums) and helper functions. In the future, may contain an
+    Superclass for BumpHunters. Currently only contains helper functions.
+    In the future, may contain an
     implementation of the 1D BumpHunter (or maybe that should go in a new class
     BumpHunter1D - I'm not going to think too hard about it right now)
+    (see examples/1d.py for a hacky implementation of 1D BumpHunter)
     """
 
     @classmethod
@@ -161,7 +162,11 @@ class BumpHunter2D(BumpHunter):
         """
         fit = data_histo.Fit(fit_fcn, 'q') # 'q' = quiet (no output)
         bkg_histo = fit_fcn.CreateHistogram()
-        # TODO: set title, axis labels, etc.
+        bkg_histo.SetNameTitle("bkg", "Background Estimate")
+        bkg_histo.GetXaxis().SetTitle("X")
+        bkg_histo.GetXaxis().SetTitleOffset(2)
+        bkg_histo.GetYaxis().SetTitle("Y")
+        bkg_histo.GetYaxis().SetTitleOffset(2)
 
         return bkg_histo
 
@@ -366,15 +371,16 @@ class BumpHunter2D(BumpHunter):
                 yield window_p, leftedge, window_width
 
 
-    def pseudoexperiments(self, n, fcn=None, reset=False, progress_out=None):
+    def pseudoexperiments(self, n, target_pval=None, fcn=None, reset=False, progress_out=None):
         """
-        Run n pseudoexperiments: generate fake data according to the distribution in
-        bkg_histo, run Bumphunter (including re-fitting and re-generating a new bkg_histo),
+        Run pseudoexperiments: generate fake data according to the distribution in
+        self.bkg_histo, run Bumphunter (including re-fitting and re-generating a new bkg_histo),
         store the test statistics. Finally, if the data's test statistic has already been
         computed, calculate the probability of observing the data's test statistic, and
         return it and its error.
 
-        n - number of pseudoexperiments to run
+        n - max number of pseudoexperiments to run
+        target_pval - stop running when this pval is reached
         fcn - TH2 to use for fitting
         reset - if True, clears all stored test statistics from previous pseudoexperiments
         progress_out - stream to write progress updates
@@ -387,16 +393,36 @@ class BumpHunter2D(BumpHunter):
         if reset:
             self.pseudoexperiments_t = []
 
-        progress_str = "Done pseudoexperiment %%%ss, t = %%s" % len(str(n))
-            
+        num_t = float(len(self.pseudoexperiments_t))
+        num_greater = float(len([t for t in self.pseudoexperiments_t if t >= self.t]))
+        current_pval, current_err = 0, 0
+
+        progress_str = "Done pseudoexperiment %%%ss, t = %%s, pval = %%s \pm %%s" % len(str(n))
+
         for i in range(n):
+            # Get the test statistic for a pseudoexperiment
             t = self.one_pseudoexperiment(fit_fcn)
             self.pseudoexperiments_t.append(t)
-            if progress_out:
-                print >>progress_out, progress_str % (i+1, t)
 
-        if self.t is not None:
-            return self.final_pval()
+            # Compute new pval/error
+            num_t += 1
+            if t > self.t:
+                num_greater += 1
+            current_pval = num_greater/num_t
+            current_err = math.sqrt(current_pval * (1.0 - current_pval)/num_t)
+
+            if progress_out:
+                print >>progress_out, progress_str % (i+1, t, current_pval, current_err)
+
+            # Stop if
+            # 1.) the caller passed a target pval
+            # 2.) at least one pseudoexperiment returned a test statistic greater
+            #     than the observed data (otherwise the pval is zero and meaningless)
+            # 3.) the current p value is less than the target, accounting for error
+            if target_pval and num_greater > 0 and current_pval + current_err < target_pval:
+                return current_pval, current_err
+
+        return current_pval, current_err
 
             
     def one_pseudoexperiment(self, fit_fcn):
@@ -420,18 +446,18 @@ class BumpHunter2D(BumpHunter):
         return bh.get_best_bump()[0]
 
     
-    def final_pval(self):
-        """
-        Compute the final p-value comparing this data's test statistic to pseudoexperiments.
-        According to the line after (4) in arxiv.org/pdf/1101.0390.pdf, this is just s/n
-        """
-        assert self.t, "Cannot call final_pval() before get_best_bump()"
-        assert self.pseudoexperiments, "Cannot call final_pval() before pseudoexperiments()"
+    # def final_pval(self):
+    #     """
+    #     Compute the final p-value comparing this data's test statistic to pseudoexperiments.
+    #     According to the line after (4) in arxiv.org/pdf/1101.0390.pdf, this is just s/n
+    #     """
+    #     assert self.t, "Cannot call final_pval() before get_best_bump()"
+    #     assert self.pseudoexperiments, "Cannot call final_pval() before pseudoexperiments()"
 
-        n = float(len(self.pseudoexperiments_t))
-        s = float(len([t for t in self.pseudoexperiments_t if t >= self.t]))
+    #     n = float(len(self.pseudoexperiments_t))
+    #     s = float(len([t for t in self.pseudoexperiments_t if t >= self.t]))
 
-        p = s/n
-        err = math.sqrt(p * (1.0 - p)/n)
+    #     p = s/n
+    #     err = math.sqrt(p * (1.0 - p)/n)
 
-        return p, err
+    #     return p, err

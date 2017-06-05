@@ -83,24 +83,6 @@ def get_fit_fcn(histo):
     return fit_fcn
 
 
-def get_fit_fcn_1d(histo):
-    fit_fcn = TF2(
-        "expo1", "[0]*exp(-[1] - [2]*x + 0*y)",
-        histo.GetXaxis().GetXmin(),
-        histo.GetXaxis().GetXmax(),
-        histo.GetYaxis().GetXmin(),
-        histo.GetYaxis().GetXmax(),
-    )
-    fit_fcn.SetNpx(histo.GetNbinsX())
-    fit_fcn.SetNpy(histo.GetNbinsY())
-
-    fit_fcn.SetParameter(0, 1000)
-    fit_fcn.SetParameter(1, 1)
-    fit_fcn.SetParameter(2, 0.2)
-
-    return fit_fcn
-
-
 def main(args):
     timestamp = datetime.now().isoformat()
 
@@ -112,8 +94,8 @@ def main(args):
     c2 = TCanvas("c2")
     bh.histo.Draw("LEGO2 HIST")
     bh.histo.Write()
-    c3 = TCanvas("c3")
-    bh.bkg_histo.Draw("LEGO2 HIST")
+    # c3 = TCanvas("c3")
+    # bh.bkg_histo.Draw("LEGO2 HIST")
     bh.bkg_histo.Write()
 
     f.Close()
@@ -126,21 +108,21 @@ def main(args):
 
         print >>out, "\nRunning BumpHunter on test data..."
 
-        t, best_p, best_center, best_width = bh.get_best_bump()
+        t, best_p, best_leftedge, best_width = bh.get_best_bump()
 
         print >>out, "Done"
         print >>out, "----------------------------------"
         # print "P-value: p = %s" % best_p # this is not very meaningful
         print >>out, "test statistic: t = %s" % t
-        print >>out, "Center: (%s, %s):" % ( (best_center[0] - 1) * args.binsize,
-                                             (best_center[1] - 1) * args.binsize )
+        print >>out, "Left edge: (%s, %s):" % ( (best_leftedge[0] - 1) * args.binsize,
+                                                (best_leftedge[1] - 1) * args.binsize )
         print >>out, "Width: (%s, %s):" % (best_width[0]*args.binsize, best_width[1]*args.binsize)
         print >>out, ""
         print >>out, "Running %s pseudoexperiments..." % args.num_pseudo
         print >>out, ""
 
-        bh.pseudoexperiments(args.num_pseudo, progress_out=out)
-        final_pval, err = bh.final_pval()
+        final_pval, err = bh.pseudoexperiments(
+            args.num_pseudo, target_pval=args.pval, progress_out=out)
 
         print >>out, ""
         print >>out, "Final p-value: p = %s \pm %s" % (final_pval, err)
@@ -170,7 +152,10 @@ if __name__ == '__main__':
     parser.add_argument('--sig-spread-y', type=float, default=.2,
                         help='stdev along y axis of signal peak')
     parser.add_argument('--num-pseudo', type=int, default=10,
-                        help='number of pseudoexperiments to run to estimate final p-val')
+                        help='max number of pseudoexperiments to run to estimate final p-val')
+    parser.add_argument('--pval', type=float, required=False,
+                        help='run pseudoexperiments until this pval is reached, not exceeding '
+                        '--num-pseudo')
 
     args = parser.parse_args()
     main(args)
