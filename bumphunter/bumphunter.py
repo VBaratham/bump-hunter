@@ -371,7 +371,8 @@ class BumpHunter2D(BumpHunter):
                 yield window_p, leftedge, window_width
 
 
-    def pseudoexperiments(self, n, target_pval=None, fcn=None, reset=False, progress_out=None):
+    def pseudoexperiments(self, n, target_pval=None, target_err=None, fcn=None,
+                          reset=False, progress_out=None):
         """
         Run pseudoexperiments: generate fake data according to the distribution in
         self.bkg_histo, run Bumphunter (including re-fitting and re-generating a new bkg_histo),
@@ -399,6 +400,9 @@ class BumpHunter2D(BumpHunter):
 
         progress_str = "Done pseudoexperiment %%%ss, t = %%s, pval = %%s \pm %%s" % len(str(n))
 
+        from datetime import datetime
+        prev_time, current_time = datetime.now(), datetime.now()
+
         for i in range(n):
             # Get the test statistic for a pseudoexperiment
             t = self.one_pseudoexperiment(fit_fcn)
@@ -406,23 +410,48 @@ class BumpHunter2D(BumpHunter):
 
             # Compute new pval/error
             num_t += 1
-            if t > self.t:
+            if t >= self.t:
                 num_greater += 1
             current_pval = num_greater/num_t
             current_err = math.sqrt(current_pval * (1.0 - current_pval)/num_t)
 
             if progress_out:
-                print >>progress_out, progress_str % (i+1, t, current_pval, current_err)
+                prev_time, current_time = current_time, datetime.now()
+                print >>progress_out, progress_str % (i+1, t, current_pval, current_err) + ", time since last = %s" % (current_time-prev_time)
 
             # Stop if
             # 1.) the caller passed a target pval
             # 2.) at least one pseudoexperiment returned a test statistic greater
             #     than the observed data (otherwise the pval is zero and meaningless)
             # 3.) the current p value is less than the target, accounting for error
-            if target_pval and num_greater > 0 and current_pval + current_err < target_pval:
+            if self.done_pseudoexperiments(num_greater, current_pval, current_err,
+                                      target_pval=target_pval, target_err=target_err):
                 return current_pval, current_err
 
         return current_pval, current_err
+
+
+    def done_pseudoexperiments(self, num_greater, current_pval, current_err, target_pval=None,
+                               target_err=None):
+        """
+        Check whether we are done running pseudoexperiments.
+        """
+
+        # At least one pseudoexperiment should have returned a test stat greater than
+        # the observed data (otherwise the pval is zero and meaningless)
+        if num_greater == 0:
+            return False
+
+        # If target_pval is supplied and we have not gotten down to it, do not stop
+        if target_pval and current_pval + current_err > target_pval:
+            return False
+
+        # If target_err is supplied and we have not gotten down to it, do not stop
+        if target_err and current_err > target_err:
+            return False
+
+        # --num-pseudo is enforced by the `for` structure
+        return True
 
             
     def one_pseudoexperiment(self, fit_fcn):
@@ -443,7 +472,10 @@ class BumpHunter2D(BumpHunter):
         # We want to re-run the constructor so it re-fits the background
         bh = self.__class__(pseudo_histo, fit_fcn=fit_fcn, config=self.config)
 
-        return bh.get_best_bump()[0]
+        t = bh.get_best_bump()[0]
+        bh.histo.Delete() # pseudo_histo
+        bh.bkg_histo.Delete()
+        return t
 
     
     # def final_pval(self):
