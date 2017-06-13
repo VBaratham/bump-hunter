@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import math
 import time
 import argparse
@@ -7,6 +8,8 @@ import subprocess
 import tempfile
 
 from ROOT import TFile
+
+from read_batch_pseudoexperiments import read_batch_pseudoexperiments
 
 """
 Run many pseudoexperiments, compile the results
@@ -26,34 +29,21 @@ def submit_jobs(scriptname, args):
     Submit batch jobs described by args in the current directory
     """
     create_script(scriptname, args)
-    os.system("qsub -t 1-%s:1 %s" % (args.num_hosts, scriptname))
+    qsub_out = subprocess.check_output("qsub -t 1-%s:1 %s" % (args.num_hosts, scriptname), shell=True)
+    try:
+        return re.search("Your job-array (\d+)", qsub_out).group(1)
+    except AttributeError:
+        return None
 
-    # for i in range(args.num_hosts):
-    #     os.system("qsub %s" % scriptname)
 
-            
-def read_jobs(scriptname, args):
+def wait_jobs(jobnum):
     while True:
-        # num_left = int(subprocess.check_output('qstat -u vbaratha | grep "%s" | wc -l' % scriptname))
-        # if num_left != 0:
-        #     break
-        if len(os.listdir(os.getcwd())) == 2 * args.num_hosts + 1: # 2 output files/host + 1 bash script
+        num_left = subprocess.check_output('qstat -u vbaratha | grep "%s" | wc -l' % jobnum, shell=True)
+        if num_left == 0:
             break
         time.sleep(60)
 
-    num_greater, num_tot = 0, 0
-    for fn in os.listdir(os.getcwd()):
-        if fn.split('.')[-1].startswith('o'):
-            with open(fn) as f:
-                all_t = [float(t) for t in f.readlines()]
-            num_greater += len([t for t in all_t if t > args.t_obs])
-            num_tot += len(all_t)
-
-    pval = float(num_greater)/float(num_tot),
-    err = math.sqrt(pval * (1.0 - pval)/num_tot)
-    return pval, err
-
-
+    
 def main(args):
     timestamp = int(time.time())
     cwd = os.getcwd()
@@ -64,8 +54,13 @@ def main(args):
     os.chdir(dirname)
 
     scriptname = "pseudoexperiments.sh"
-    submit_jobs(scriptname, args)
-    print read_jobs(scriptname, args)
+    jobnum = submit_jobs(scriptname, args)
+    if not jobnum:
+        print "Could not read job number from qsub command"
+        sys.exit(1)
+    if args.t_obs: # User wants to calculate and display final p-val
+        wait_jobs(jobnum)
+        print read_batch_pseudoexperiments(os.getcwd(), args.t_obs)
     
     os.chdir(cwd)
     # os.removedirs(dirname)
@@ -75,8 +70,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run pseudoexperiments for a given histogram")
     parser.add_argument('rootfile', type=os.path.abspath, 
                         help='name of root file containing data histogram')
-    parser.add_argument('--t-obs', type=float, required=True,
-                        help='observed t statistic')
+    parser.add_argument('--t-obs', type=float,
+                        help='observed t statistic. Only include if you want this process to '
+                        'calculate final pval (can always calculate it later using '
+                        'read_batch_pseudoexperiments.py')
     parser.add_argument('--name', type=str, default='signal',
                         help='name of histogram in root file')
     parser.add_argument('--num-hosts', type=int, default=100,
