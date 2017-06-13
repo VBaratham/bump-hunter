@@ -34,7 +34,6 @@ def main(args):
     hist = f.Get(args.name)
     fit_fcn = get_fit_fcn(hist)
     bh = BumpHunter2D(hist, fit_fcn) # TODO: need same config that was used to calculate t_obs
-    print "hello world"
     bh.pseudoexperiments_simple(args.num, fit_fcn)
 
 

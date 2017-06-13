@@ -26,9 +26,10 @@ def submit_jobs(scriptname, args):
     Submit batch jobs described by args in the current directory
     """
     create_script(scriptname, args)
+    os.system("qsub -t 1-%s:1 %s" % (args.num_hosts, scriptname))
 
-    for i in range(args.num_hosts):
-        os.system("qsub %s" % scriptname)
+    # for i in range(args.num_hosts):
+    #     os.system("qsub %s" % scriptname)
 
             
 def read_jobs(scriptname, args):
