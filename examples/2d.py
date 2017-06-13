@@ -64,23 +64,6 @@ def make_histo_1d(title, args, include_signal=True):
     return histo
 
 
-def get_fit_fcn(histo):
-    fit_fcn = TF2(
-        "expo2", "[0]*exp(-[1] - [2]*x - [3]*y)",
-        histo.GetXaxis().GetXmin(),
-        histo.GetXaxis().GetXmax(),
-        histo.GetYaxis().GetXmin(),
-        histo.GetYaxis().GetXmax(),
-    )
-    fit_fcn.SetNpx(histo.GetNbinsX())
-    fit_fcn.SetNpy(histo.GetNbinsY())
-
-    fit_fcn.SetParameter(0, 1000)
-    fit_fcn.SetParameter(1, 1)
-    fit_fcn.SetParameter(2, 0.2)
-    fit_fcn.SetParameter(3, 0.2)
-
-    return fit_fcn
 
 
 def main(args):
@@ -102,6 +85,8 @@ def main(args):
 
     with open("runs/%s.stdout" % timestamp, "w") as outfile:
         out = MultiOutstream(sys.stdout, outfile)
+
+        print >>out, timestamp
 
         import json
         print >>out, json.dumps(args.__dict__, indent=4, sort_keys=True)

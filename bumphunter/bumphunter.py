@@ -27,7 +27,7 @@ class BumpHunterConfig(object):
             window_def=WINDOW_DEF_RECTANGLE,
             sideband_def=SIDEBAND_DEF_RECTANGLE,
             sideband_req=1e-3,
-            deviation_from_sq=4,
+            deviation_from_sq=2,
             allow_oob_x=False,
             allow_oob_y=False
     ):
@@ -425,10 +425,19 @@ class BumpHunter2D(BumpHunter):
             #     than the observed data (otherwise the pval is zero and meaningless)
             # 3.) the current p value is less than the target, accounting for error
             if self.done_pseudoexperiments(num_greater, current_pval, current_err,
-                                      target_pval=target_pval, target_err=target_err):
+                                           target_pval=target_pval, target_err=target_err):
                 return current_pval, current_err
 
         return current_pval, current_err
+
+    def pseudoexperiments_simple(self, n, fit_fcn):
+        """
+        Run pseudoexperiments without calculating anything but t-statistics, with a simple
+        interface for use when running in batch
+        """
+        for i in range(n):
+            t = self.one_pseudoexperiment(fit_fcn)
+            print t
 
 
     def done_pseudoexperiments(self, num_greater, current_pval, current_err, target_pval=None,
@@ -438,20 +447,21 @@ class BumpHunter2D(BumpHunter):
         """
 
         # At least one pseudoexperiment should have returned a test stat greater than
-        # the observed data (otherwise the pval is zero and meaningless)
-        if num_greater == 0:
+        # the observed data (otherwise the pval is zero and meaningless), and at least
+        # one should have returned a test stat less than the observed data
+        if num_greater == 0 or num_greater == len(self.pseudoexperiments_t):
             return False
 
-        # If target_pval is supplied and we have not gotten down to it, do not stop
-        if target_pval and current_pval + current_err > target_pval:
-            return False
+        # If target_pval is supplied and we have gotten down to it, stop
+        if target_pval and current_pval + current_err < target_pval:
+            return True
 
-        # If target_err is supplied and we have not gotten down to it, do not stop
-        if target_err and current_err > target_err:
-            return False
+        # If target_err is supplied and we have gotten down to it, stop
+        if target_err and current_err < target_err:
+            return True
 
         # --num-pseudo is enforced by the `for` structure
-        return True
+        return False
 
             
     def one_pseudoexperiment(self, fit_fcn):
@@ -466,7 +476,7 @@ class BumpHunter2D(BumpHunter):
         )
         pseudo_histo.FillRandom(self.bkg_histo, h.Integral())
 
-        # Create a bumphunter instance with all the same config attributes except for histo.
+        # Create a bumphunter instance with this BumpHunter's config attributes
         # Don't use copy.deepcopy() because we don't want to copy self.best_p,
         # self.pseudoexperiments_t, etc.
         # We want to re-run the constructor so it re-fits the background
