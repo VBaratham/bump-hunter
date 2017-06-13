@@ -9,7 +9,6 @@ import math
 from datetime import datetime
 
 from ROOT import TH2F, TF2, TRandom3, TCanvas, TFile, gRandom
-gRandom.SetSeed()
 
 from bumphunter.bumphunter import BumpHunter2D
 from bumphunter.utils import MultiOutstream
@@ -61,6 +60,23 @@ def make_histo_1d(title, args, include_signal=True):
     return histo
 
 
+def get_fit_fcn(histo, args):
+    fit_fcn = TF2(
+        "expo2", "[0]*exp(-[1] - [2]*x - [3]*y)",
+        histo.GetXaxis().GetXmin(),
+        histo.GetXaxis().GetXmax(),
+        histo.GetYaxis().GetXmin(),
+        histo.GetYaxis().GetXmax(),
+    )
+    fit_fcn.SetNpx(histo.GetNbinsX())
+    fit_fcn.SetNpy(histo.GetNbinsY())
+
+    fit_fcn.SetParameter(0, 1000)
+    fit_fcn.SetParameter(1, 1)
+    fit_fcn.SetParameter(2, 0.2)
+    fit_fcn.SetParameter(3, 0.2)
+
+    return fit_fcn
 
 
 def main(args):

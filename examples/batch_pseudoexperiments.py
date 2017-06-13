@@ -52,7 +52,6 @@ def wait_jobs(jobnum):
     
 def main(args):
     timestamp = int(time.time())
-    cwd = os.getcwd()
     
     dirname = "pseudoexperiments_%s" % timestamp
     os.mkdir(dirname)
@@ -66,8 +65,6 @@ def main(args):
     if args.t_obs: # User wants to calculate and display final p-val
         wait_jobs(jobnum)
         print read_batch_pseudoexperiments(os.getcwd(), args.t_obs)
-    
-    os.chdir(cwd)
     
 
 if __name__ == '__main__':
