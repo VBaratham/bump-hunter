@@ -10,9 +10,9 @@ from bumphunter.bumphunter import BumpHunter2D
 Run one batch of pseudoexperiments, spitting t statistics to stdout
 """
 
-def get_fit_fcn(histo):
+def get_fit_fcn(histo, args):
     fit_fcn = TF2(
-        "expo2", "[0]*exp(-[1] - [2]*x - [3]*y)",
+        "expo2", args.formula,
         histo.GetXaxis().GetXmin(),
         histo.GetXaxis().GetXmax(),
         histo.GetYaxis().GetXmin(),
@@ -32,7 +32,7 @@ def get_fit_fcn(histo):
 def main(args):
     f = TFile.Open(args.rootfile)
     hist = f.Get(args.name)
-    fit_fcn = get_fit_fcn(hist)
+    fit_fcn = get_fit_fcn(hist, args)
     bh = BumpHunter2D(hist, fit_fcn) # TODO: need same config that was used to calculate t_obs
     bh.pseudoexperiments_simple(args.num, fit_fcn)
 
