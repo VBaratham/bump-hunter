@@ -3,6 +3,7 @@ import sys
 import re
 import math
 import time
+import json
 import argparse
 import subprocess
 import tempfile
@@ -19,6 +20,11 @@ def create_script(scriptname, args):
     with open(scriptname, "w") as f:
         print >>f, "#!/bin/bash"
         print >>f, "#$ -V"
+        print >>f, ""
+        print >>f, '\n'.join('# %s' % line for line in json.dumps(args.__dict__, sort_keys=True,
+                                                                  indent=4).split('\n'))
+        print >>f, '# %s' % os.path.split(os.getcwd())[-1]
+        print >>f, ""
         arg_str = '%s --name %s --num %s --formula "%s"' % (args.rootfile, args.name,
                                                             args.num_per_host, args.formula)
         print >>f, "python ${BUMPHUNTER_LIB}/examples/pseudoexperiments.py %s" % arg_str
