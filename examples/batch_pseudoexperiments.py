@@ -48,7 +48,6 @@ def main(args):
     timestamp = int(time.time())
     cwd = os.getcwd()
     
-    # dirname = tempfile.mkdtemp()
     dirname = "pseudoexperiments_%s" % timestamp
     os.mkdir(dirname)
     os.chdir(dirname)
@@ -63,7 +62,6 @@ def main(args):
         print read_batch_pseudoexperiments(os.getcwd(), args.t_obs)
     
     os.chdir(cwd)
-    # os.removedirs(dirname)
     
 
 if __name__ == '__main__':

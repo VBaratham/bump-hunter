@@ -8,7 +8,8 @@ import argparse
 import math
 from datetime import datetime
 
-from ROOT import TH2F, TF2, TRandom3, TCanvas, TFile
+from ROOT import TH2F, TF2, TRandom3, TCanvas, TFile, gRandom
+gRandom.SetSeed()
 
 from bumphunter.bumphunter import BumpHunter2D
 from bumphunter.utils import MultiOutstream
@@ -25,14 +26,12 @@ def make_histo(title, args, include_signal=True):
     histo.GetYaxis().SetTitle("Y")
     histo.GetYaxis().SetTitleOffset(2)
     
-    rnd = TRandom3()
-    rnd.SetSeed(0)
     for i in range(args.nbkg):
-        histo.Fill(rnd.Exp(args.bkg_mean), rnd.Exp(args.bkg_mean))
+        histo.Fill(gRandom.Exp(args.bkg_mean), gRandom.Exp(args.bkg_mean))
     if include_signal:
         for i in range(args.nsig):
-            x, y = rnd.Gaus(args.sig_x, args.sig_spread_x), rnd.Gaus(args.sig_y, args.sig_spread_y)
-            # print x, y
+            x = gRandom.Gaus(args.sig_x, args.sig_spread_x)
+            y = gRandom.Gaus(args.sig_y, args.sig_spread_y)
             histo.Fill(x, y)
 
     return histo
@@ -51,13 +50,11 @@ def make_histo_1d(title, args, include_signal=True):
     histo.GetYaxis().SetTitle("Y")
     histo.GetYaxis().SetTitleOffset(2)
     
-    rnd = TRandom3()
-    rnd.SetSeed(0)
     for i in range(args.nbkg):
-        histo.Fill(rnd.Exp(args.bkg_mean), args.binsize/2.0)
+        histo.Fill(gRandom.Exp(args.bkg_mean), args.binsize/2.0)
     if include_signal:
         for i in range(args.nsig):
-            x, y = rnd.Gaus(args.sig_x, args.sig_spread_x), args.binsize/2.0
+            x, y = gRandom.Gaus(args.sig_x, args.sig_spread_x), args.binsize/2.0
             # print x, y
             histo.Fill(x, y)
 
