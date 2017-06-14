@@ -7,7 +7,8 @@ Author: Vyassa Baratham <vbaratham@berkeley.edu>
 import abc
 import sys
 import math
-from itertools import product
+import itertools
+
 from operator import add, itemgetter
 
 from ROOT import TF1, TF2, TH1F, TH2F
@@ -152,6 +153,73 @@ class BumpHunter(object):
 
         return bkg_histo
 
+    def get_best_bump(self, histo=None):
+        """
+        Compute and store the BumpHunter test statistic
+
+        histo - optional TH1 to store pvals for each window. Mainly used for debugging.
+        """
+        best_p, best_leftedge, best_width = min(self.pvals(histo=histo), key=itemgetter(0))
+        t = -math.log(best_p)
+        return t, best_p, best_leftedge, best_width
+
+    @abc.abstractmethod
+    def windows_and_sidebands(self):
+        """
+        Return tuples of (leftedge, width, window, sideband) for all windows to evaluate.
+        window and sideband are d-tuples of (x, y, ...)
+        """
+        raise NotImplementedError()
+
+    def pvals(self, histo=None):
+        """
+        Iterate over widths and left edge locations, compute
+        the background (null hypothesis),and calculate p-values for each. Yield the
+        ones that are interesting (a p-val is interesting if it is less than 1),
+        along with their left edge and width
+
+        histo - optional TH1 to store pvals for each window. Mainly used for debugging.
+        """
+        for leftedge, width, window, sideband in self.windows_and_sidebands():
+            # Integrate histograms over the central window and sidebands
+            # Note we will not be able to use TH2.Integrate() for non rectangular windows,
+            # so we don't bother using it here even though it would presumably be faster
+
+            # counts/error of data in the central window
+            dc, dc_error = self.integrate_histo_with_error(self.histo, window)
+
+            # counts/error of bkg in the central window
+            bc, bc_error = self.integrate_histo_with_error(self.bkg_histo, window)
+
+            # counts/error of data in the sideband
+            ds, ds_error = self.integrate_histo_with_error(self.histo, sideband)
+
+            # counts/error of bkg in the sideband
+            bs, bs_error = self.integrate_histo_with_error(self.bkg_histo, sideband)
+
+            if bc == 0:
+                continue  # TODO: Is this necessary?
+            if dc <= bc:
+                continue  # Not an excess
+
+            # TODO: implement deficit detection
+
+            window_p = mean_poisson_pval(dc, bc, bc_error)
+
+            if self.config.sideband_def != BumpHunterConfig.SIDEBAND_DEF_NONE:
+                sideband_p = mean_poisson_pval(ds, bs, bs_error)
+
+                if sideband_p < self.config.sideband_req:
+                    continue
+
+            if histo:
+                histo.Fill(window_p)
+
+            # We return window_p, rather than the true p-val eq (17) in
+            # arxiv.org/pdf/1101.0390.pdf, in light of the paragraph
+            # after that equation
+            yield window_p, leftedge, width
+
     def pseudoexperiments(self, n, fit_fcn, out=sys.stdout):
         """
         Run pseudoexperiments and spit t statistics to out
@@ -173,73 +241,17 @@ class BumpHunter(object):
         # We want to re-run the constructor so it re-fits the background
         bh = self.__class__(pseudo_histo, fit_fcn=fit_fcn, config=self.config)
 
-        return bh.get_best_bump()[0]
+        t = bh.get_best_bump()[0]
 
-    def get_best_bump(self, histo=None):
-        """
-        Compute and store the BumpHunter test statistic
+        bh.histo.Delete()
+        bh.bkg_histo.Delete()
 
-        histo - optional TH1 to store pvals for each window. Mainly used for debugging.
-        """
-        best_p, best_leftedge, best_width = min(self.pvals(histo=histo), key=itemgetter(0))
-        t = -math.log(best_p)
-        return t, best_p, best_leftedge, best_width
+        return t
 
-    def pvals(self, histo=None):
-        """
-        Iterate over widths and left edge locations, compute
-        the background (null hypothesis),and calculate p-values for each. Yield the
-        ones that are interesting (a p-val is interesting if it is less than 1),
-        along with their left edge and width
-
-        histo - optional TH1 to store pvals for each window. Mainly used for debugging.
-        """
-        for window_width in self.window_widths():
-            sideband_width = self.sideband_width(window_width)
-            for leftedge, window, sideband in self.windows_and_sidebands(window_width, sideband_width):
-                # Integrate histograms over the central window and sidebands
-                # Note we will not be able to use TH2.Integrate() for non rectangular windows,
-                # so we don't bother using it here even though it would presumably be faster
-
-                # counts/error of data in the central window
-                dc, dc_error = self.integrate_histo_with_error(self.histo, window)
-
-                # counts/error of bkg in the central window
-                bc, bc_error = self.integrate_histo_with_error(self.bkg_histo, window)
-
-                # counts/error of data in the sideband
-                ds, ds_error = self.integrate_histo_with_error(self.histo, sideband)
-
-                # counts/error of bkg in the sideband
-                bs, bs_error = self.integrate_histo_with_error(self.bkg_histo, sideband)
-
-                if bc == 0:
-                    continue  # TODO: Is this necessary?
-                if dc <= bc:
-                    continue  # Not an excess
-
-                # TODO: implement deficit detection
-
-                window_p = mean_poisson_pval(dc, bc, bc_error)
-
-                if self.config.sideband_def != BumpHunterConfig.SIDEBAND_DEF_NONE:
-                    sideband_p = mean_poisson_pval(ds, bs, bs_error)
-
-                    if sideband_p < self.config.sideband_req:
-                        continue
-
-                if histo:
-                    histo.Fill(window_p)
-
-                # We return window_p, rather than the true p-val eq (17) in
-                # arxiv.org/pdf/1101.0390.pdf, in light of the paragraph
-                # after that equation
-                yield window_p, leftedge, window_width
-
-    def __del__(self):
-        self.histo.Delete()
-        if self.bkg_histo:
-            self.bkg_histo.Delete()
+    # def __del__(self):
+    #     self.histo.Delete()
+    #     if self.bkg_histo:
+    #         self.bkg_histo.Delete()
 
 
 class BumpHunter1D(BumpHunter):
@@ -260,6 +272,13 @@ class BumpHunter1D(BumpHunter):
             name, title,
             h.GetNbinsX(), h.GetXaxis().GetXMin(), h.GetXaxis().GetXmax()
         )
+
+    def window_widths(self):
+        max_x = int(math.floow(self.histo.GetNbinsX()/2))
+        return xrange(1, max_x)
+
+    def window(self, leftedge, width):
+        pass
 
     
 class BumpHunter2D(BumpHunter):
@@ -320,7 +339,6 @@ class BumpHunter2D(BumpHunter):
                 if xwidth + i <= max_x:
                     yield (xwidth + i, ywidth)
 
-
     def window(self, leftedge, width):
         """
         Return a collection of (binx, biny) tuples corresponding to the window
@@ -340,7 +358,6 @@ class BumpHunter2D(BumpHunter):
             raise ValueError("Unrecognized window definition (self.config.window_def). "
                              "Use one of BumpHunterConfig.WINDOW_DEF_*")
 
-
     def sideband_width(self, window_width):
         """
         Return (widthx, widthy) of the sideband to be used for a particular window size.
@@ -353,7 +370,6 @@ class BumpHunter2D(BumpHunter):
         if self.config.sideband_def == BumpHunterConfig.SIDEBAND_DEF_NONE:
             return (0, 0)
         return tuple(max(1, int(math.floor(x/2))) for x in window_width)
-
 
     def sideband(self, leftedge, window_width, sideband_width, window):
         """
@@ -383,15 +399,13 @@ class BumpHunter2D(BumpHunter):
             raise ValueError("Unrecognized sideband definition (self.config.sideband_def). "
                              "Use one of BumpHunterConfig.SIDEBAND_DEF_*")
 
-
     def step_size(self, window_width):
         """
         Return the step size along each dimension to use for the given window width
         """
         return tuple(max(1, int(math.floor(x/2))) for x in window_width)
 
-
-    def windows_and_sidebands(self, window_width, sideband_width):
+    def windows_and_sidebands(self):
         """
         Yield tuples of (leftedge, window, sideband), where window
         and sideband are collections of (binx, biny) tuples. Each window
@@ -399,6 +413,12 @@ class BumpHunter2D(BumpHunter):
         self.config.allow_oob_x/y is True, in which case the sideband may be partially or
         completely out of bounds.
         """
+        return itertools.chain.from_iterable(
+            self.windows_and_sidebands_for_width(window_width, self.sideband_width(window_width))
+            for window_width in self.window_widths()
+        )
+
+    def windows_and_sidebands_for_width(self, window_width, sideband_width):
         min_leftedge = list(map(add, sideband_width, (1, 1)))
         max_leftedge = list((self.histo.GetNbinsX() - min_leftedge[0] - window_width[0],
                              self.histo.GetNbinsY() - min_leftedge[1] - window_width[1]))
@@ -412,9 +432,9 @@ class BumpHunter2D(BumpHunter):
 
         step_size = self.step_size(window_width)
 
-        for leftedge in product(range(min_leftedge[0], max_leftedge[0], step_size[0]),
-                                range(min_leftedge[1], max_leftedge[1], step_size[1])):
+        for leftedge in itertools.product(range(min_leftedge[0], max_leftedge[0], step_size[0]),
+                                          range(min_leftedge[1], max_leftedge[1], step_size[1])):
             window = self.window(leftedge, window_width)
             sideband = self.sideband(leftedge, window_width, sideband_width, window)
-            yield (leftedge, window, sideband)
+            yield (leftedge, window_width, window, sideband)
 

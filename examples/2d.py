@@ -81,7 +81,6 @@ def get_fit_fcn(histo):
 def main(args):
     timestamp = datetime.now().isoformat()
 
-    import pdb; pdb.set_trace()
 
     histo = make_histo('signal', args, include_signal=True)
     bh = BumpHunter2D(histo, fit_fcn=get_fit_fcn(histo))
