@@ -1,3 +1,4 @@
+import os
 import sys
 import argparse
 from datetime import datetime
@@ -34,12 +35,12 @@ def main(args):
     hist = f.Get(args.name)
     fit_fcn = get_fit_fcn(hist, args)
     bh = BumpHunter2D(hist, fit_fcn) # TODO: need same config that was used to calculate t_obs
-    bh.pseudoexperiments_simple(args.num, fit_fcn)
+    bh.pseudoexperiments(args.num, fit_fcn)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run pseudoexperiments for a given histogram")
-    parser.add_argument('rootfile', type=str,
+    parser.add_argument('--rootfile', type=os.path.abspath, required=True,
                         help='name of root file containing data histogram')
     parser.add_argument('--name', type=str, default='signal',
                         help='name of histogram in root file')
@@ -47,6 +48,7 @@ if __name__ == '__main__':
                         help='number of pseudoexperiments to run')
     parser.add_argument('--formula', type=str, default="[0]*exp(-[1] - [2]*x - [3]*y)",
                         help='formula to fit')
+    # TODO: allow passing in initial parameter values
 
     args = parser.parse_args()
     main(args)

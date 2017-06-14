@@ -25,8 +25,8 @@ def create_script(scriptname, args):
                                                                   indent=4).split('\n'))
         print >>f, '# %s' % os.path.split(os.getcwd())[-1]
         print >>f, ""
-        arg_str = '%s --name %s --num %s --formula "%s"' % (args.rootfile, args.name,
-                                                            args.num_per_host, args.formula)
+        arg_str = '--rootfile %s --name %s --num %s --formula "%s"' % (args.rootfile, args.name,
+                                                                       args.num_per_host, args.formula)
         print >>f, "python ${BUMPHUNTER_LIB}/examples/pseudoexperiments.py %s" % arg_str
 
 
@@ -68,8 +68,8 @@ def main(args):
     
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run pseudoexperiments for a given histogram")
-    parser.add_argument('rootfile', type=os.path.abspath, 
+    parser = argparse.ArgumentParser(description="Run pseudoexperiments for a given histogram in batch")
+    parser.add_argument('--rootfile', type=os.path.abspath, required=True,
                         help='name of root file containing data histogram')
     parser.add_argument('--t-obs', type=float,
                         help='observed t statistic. Only include if you want this process to '
