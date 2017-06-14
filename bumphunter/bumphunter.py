@@ -119,9 +119,18 @@ class BumpHunter(object):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
+    def windows_and_sidebands(self):
+        """
+        Return tuples of (leftedge, width, window, sideband) for all windows to evaluate.
+        window and sideband are d-tuples of (x, y, ...)
+        """
+        raise NotImplementedError()
+
     def prettify_axes(self, histo, x="X", y="Y", z="Z", offset=2):
         """
-        Put labels on axes and offset them
+        Put labels on axes and offset them.
+
         x, y, z - axis labels to use (only pass the ones relevant to your dimensions)
         offset - offset to use
         """
@@ -162,14 +171,6 @@ class BumpHunter(object):
         best_p, best_leftedge, best_width = min(self.pvals(histo=histo), key=itemgetter(0))
         t = -math.log(best_p)
         return t, best_p, best_leftedge, best_width
-
-    @abc.abstractmethod
-    def windows_and_sidebands(self):
-        """
-        Return tuples of (leftedge, width, window, sideband) for all windows to evaluate.
-        window and sideband are d-tuples of (x, y, ...)
-        """
-        raise NotImplementedError()
 
     def pvals(self, histo=None):
         """
@@ -248,11 +249,6 @@ class BumpHunter(object):
 
         return t
 
-    # def __del__(self):
-    #     self.histo.Delete()
-    #     if self.bkg_histo:
-    #         self.bkg_histo.Delete()
-
 
 class BumpHunter1D(BumpHunter):
     @property
@@ -272,6 +268,9 @@ class BumpHunter1D(BumpHunter):
             name, title,
             h.GetNbinsX(), h.GetXaxis().GetXMin(), h.GetXaxis().GetXmax()
         )
+
+    def windows_and_sidebands(self):
+        pass # TODO
 
     def window_widths(self):
         max_x = int(math.floow(self.histo.GetNbinsX()/2))
@@ -301,6 +300,19 @@ class BumpHunter2D(BumpHunter):
             name, title,
             h.GetNbinsX(), h.GetXaxis().GetXmin(), h.GetXaxis().GetXmax(),
             h.GetNbinsY(), h.GetYaxis().GetXmin(), h.GetYaxis().GetXmax(),
+        )
+
+    def windows_and_sidebands(self):
+        """
+        Yield tuples of (leftedge, window, sideband), where window
+        and sideband are collections of (binx, biny) tuples. Each window
+        must be defined so that the window+sideband is in the histogram, unless
+        self.config.allow_oob_x/y is True, in which case the sideband may be partially or
+        completely out of bounds.
+        """
+        return itertools.chain.from_iterable(
+            self.windows_and_sidebands_for_width(window_width, self.sideband_width(window_width))
+            for window_width in self.window_widths()
         )
 
     def window_widths(self):
@@ -404,19 +416,6 @@ class BumpHunter2D(BumpHunter):
         Return the step size along each dimension to use for the given window width
         """
         return tuple(max(1, int(math.floor(x/2))) for x in window_width)
-
-    def windows_and_sidebands(self):
-        """
-        Yield tuples of (leftedge, window, sideband), where window
-        and sideband are collections of (binx, biny) tuples. Each window
-        must be defined so that the window+sideband is in the histogram, unless
-        self.config.allow_oob_x/y is True, in which case the sideband may be partially or
-        completely out of bounds.
-        """
-        return itertools.chain.from_iterable(
-            self.windows_and_sidebands_for_width(window_width, self.sideband_width(window_width))
-            for window_width in self.window_widths()
-        )
 
     def windows_and_sidebands_for_width(self, window_width, sideband_width):
         min_leftedge = list(map(add, sideband_width, (1, 1)))

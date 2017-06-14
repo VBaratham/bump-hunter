@@ -1,3 +1,4 @@
+import os
 import sys
 import argparse
 from datetime import datetime
@@ -39,7 +40,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run pseudoexperiments for a given histogram")
-    parser.add_argument('rootfile', type=str,
+    parser.add_argument('--rootfile', type=os.path.abspath, required=True,
                         help='name of root file containing data histogram')
     parser.add_argument('--name', type=str, default='signal',
                         help='name of histogram in root file')
