@@ -32,7 +32,6 @@ def make_histo(title, args, include_signal=True):
             x = gRandom.Gaus(args.sig_x, args.sig_spread_x)
             y = gRandom.Gaus(args.sig_y, args.sig_spread_y)
             histo.Fill(x, y)
-
     return histo
 
 
@@ -60,7 +59,7 @@ def make_histo_1d(title, args, include_signal=True):
     return histo
 
 
-def get_fit_fcn(histo, args):
+def get_fit_fcn(histo):
     fit_fcn = TF2(
         "expo2", "[0]*exp(-[1] - [2]*x - [3]*y)",
         histo.GetXaxis().GetXmin(),
@@ -82,8 +81,11 @@ def get_fit_fcn(histo, args):
 def main(args):
     timestamp = datetime.now().isoformat()
 
+    import pdb; pdb.set_trace()
+
     histo = make_histo('signal', args, include_signal=True)
     bh = BumpHunter2D(histo, fit_fcn=get_fit_fcn(histo))
+
 
     f = TFile("runs/%s.root" % timestamp, "NEW")
 

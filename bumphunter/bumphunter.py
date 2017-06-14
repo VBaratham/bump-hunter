@@ -4,11 +4,15 @@ Multivariate implementation of BumpHunter hypothesis test
 Author: Vyassa Baratham <vbaratham@berkeley.edu>
 """
 
+import abc
+import sys
 import math
 from itertools import product
 from operator import add, itemgetter
 
-from ROOT import Math, TMath, TH2F
+from ROOT import TF1, TF2, TH1F, TH2F
+
+from .utils import mean_poisson_pval, poisson_pval
 
 class BumpHunterConfig(object):
     """
@@ -58,9 +62,44 @@ class BumpHunter(object):
     BumpHunter1D - I'm not going to think too hard about it right now)
     (see examples/1d.py for a hacky implementation of 1D BumpHunter)
     """
+    __metaclass__ = abc.ABCMeta
 
-    @classmethod
-    def integrate_histo_with_error(cls, histo, bins):
+    @abc.abstractproperty
+    def _dim(self):
+        raise NotImplementedError()
+
+    @abc.abstractproperty
+    def _histo_cls(self):
+        raise NotImplementedError()
+
+    @abc.abstractproperty
+    def _fcn_cls(self):
+        raise NotImplementedError()
+
+
+    def __init__(self, histo, fit_fcn=None, bkg_histo=None, config=None):
+        """
+        histo - histogram to analyze
+        bkg_histo - background histo (null hypothesis)
+        fit_fcn - function to use for fitting to estimate background
+        config - BumpHunterConfig instance containing config options
+        """
+        assert (bkg_histo or fit_fcn), "Need to supply bkg_histo or fit_fcn"
+
+        if not isinstance(histo, self._histo_cls):
+            raise TypeError(
+                "For %s, histo must be a %s" % (self.__class__.__name__,
+                                                self._histo_cls.__name__)
+            )
+
+        self.histo = histo
+        self.bkg_histo = bkg_histo or self.make_bkg_histo(histo, fit_fcn)
+        self.fit_fcn = fit_fcn
+
+        self.config = config or BumpHunterConfig()
+
+    @staticmethod
+    def integrate_histo_with_error(histo, bins):
         """
         Add the given bins from self.histo and their errors, return both sums.
 
@@ -71,85 +110,31 @@ class BumpHunter(object):
             math.sqrt(sum(histo.GetBinError(*b)*histo.GetBinError(*b) for b in bins))
         )
 
-    @classmethod
-    def mean_poisson_pval(cls, d, b, b_error, conv_width=3, step_size=1):
+    @abc.abstractmethod
+    def copy_histo_dimensions(self, h, name, title):
         """
-        Mostly transcribed from
-        https://svnweb.cern.ch/trac/atlasoff/browser/Trigger/TrigFTK/SuPlot/trunk/src/bumphunter/StatisticsAnalysis.C
-        (including the docstring)
-
-        Convolve a Gaussian (non-negative part) with a Poisson. Background is b+-b_error, and
-        we need the mean Poisson probability to observe at least d (if d >=b, else at most d),
-        given this PDF for b.
-        The way is to cut the PDF or b into segments, whose area is exactly calculable, take the
-        Poisson probability at the center of each gaussian slice, and average the probabilities
-        using the area of each slice as weight.
-
-        But here, currently, we are guaranteed to have d > b so some of this simplifies.
-
-        d - data counts
-        b - background counts
-        b_error - error in bkg counts
-        conv_width - range of l in convolution loop (I think this is how many sigmas of to convolve)
-        step_size - step size for convolution
-
-        TODO: I think there might be a better way to do this using ROOT.TMath
+        Create and return a new (empty) histo with the same dimensions/binning
+        as self.histo, but with the given name and title
         """
-        if b_error == 0:
-            return TMath.Gamma(d, b) # Guaranteed to have d > b, so this is equivalent to commonFunctions.h:503
+        raise NotImplementedError()
 
-        # TODO: Pythonify the following
-        mean, total_weight = 0.0, 0.0
-        l = -conv_width
-        while l <= conv_width:
-            bcenter = max(0, b + l*b_error)
-            this_slice_weight = Math.normal_cdf(l + 0.5*step_size) - Math.normal_cdf(l - 0.5*step_size)
-            this_pval = BumpHunter.poisson_pval(d, bcenter)
-            mean += this_pval*this_slice_weight
-            total_weight += this_slice_weight
-            l += step_size
-        return mean / total_weight
-
-    @classmethod
-    def poisson_pval(cls, d, b):
-        """ Two sided only """
-        return TMath.Gamma(d, b) if d >= b else 1 - TMath.Gamma(d+1, b)
-
-
-class BumpHunter2D(BumpHunter):
-    """Implementation of 2D BumpHunter"""
-    
-    def __init__(
-            self,
-            histo,
-            fit_fcn=None,
-            bkg_histo=None,
-            config=None
-    ):
+    def prettify_axes(self, histo, x="X", y="Y", z="Z", offset=2):
         """
-        histo - TH2 containing the data to analyze
-        bkg_histo - background histo (null hypothesis). Usually you'd pass fit_fcn and
-                    let it fit the background for you, rather than passing this arg.
-        fit_fcn - function to use for fitting to estimate background
-        config - BumpHunterConfig instance containing config options
+        Put labels on axes and offset them
+        x, y, z - axis labels to use (only pass the ones relevant to your dimensions)
+        offset - offset to use
         """
-        assert (bkg_histo or fit_fcn), "Need to supply bkg_histo or fit_fcn"
-        
-        self.histo = histo
-        self.bkg_histo = bkg_histo or BumpHunter2D.make_bkg_histo(histo, fit_fcn)
-        self.fit_fcn = fit_fcn
+        if self._dim >= 1:
+            histo.GetXaxis().SetTitle(x)
+            histo.GetXaxis().SetTitleOffset(offset)
+        if self._dim >= 2:
+            histo.GetYaxis().SetTitle(y)
+            histo.GetYaxis().SetTitleOffset(offset)
+        if self._dim >= 3:
+            histo.GetZaxis().SetTitle(z)
+            histo.GetZaxis().SetTitleOffset(offset)
 
-        self.config = config or BumpHunterConfig()
-        
-        self.best_p = None
-        self.best_leftedge = None
-        self.best_width = None
-        self.t = None  # test statistic for the data
-        self.pseudoexperiments_t = []  # list of test statistics for pseudoexperiments
-
-
-    @classmethod
-    def make_bkg_histo(cls, data_histo, fit_fcn):
+    def make_bkg_histo(self, data_histo, fit_fcn):
         """
         Return a histogram to be used as background (null hypothesis). Fits
         a decaying exponential to the data and returns a histogram representing
@@ -163,13 +148,141 @@ class BumpHunter2D(BumpHunter):
         fit = data_histo.Fit(fit_fcn, 'q') # 'q' = quiet (no output)
         bkg_histo = fit_fcn.CreateHistogram()
         bkg_histo.SetNameTitle("bkg", "Background Estimate")
-        bkg_histo.GetXaxis().SetTitle("X")
-        bkg_histo.GetXaxis().SetTitleOffset(2)
-        bkg_histo.GetYaxis().SetTitle("Y")
-        bkg_histo.GetYaxis().SetTitleOffset(2)
+        self.prettify_axes(bkg_histo)
 
         return bkg_histo
 
+    def pseudoexperiments(self, n, fit_fcn, out=sys.stdout):
+        """
+        Run pseudoexperiments and spit t statistics to out
+        """
+        for i in range(n):
+            print >>out,  self.one_pseudoexperiment(fit_fcn)
+
+    def one_pseudoexperiment(self, fit_fcn):
+        """
+        Run one pseudoexperiment, return test statistic
+        """
+        pseudo_histo = self.copy_histo_dimensions(
+            self.histo, "pseudodata", "2D BumpHunter pseudoexperiment")
+        pseudo_histo.FillRandom(self.bkg_histo, self.histo.Integral())
+
+        # Create a bumphunter instance with this BumpHunter's config attributes
+        # Don't use copy.deepcopy() because we don't want to copy self.best_p,
+        # self.pseudoexperiments_t, etc.
+        # We want to re-run the constructor so it re-fits the background
+        bh = self.__class__(pseudo_histo, fit_fcn=fit_fcn, config=self.config)
+
+        return bh.get_best_bump()[0]
+
+    def get_best_bump(self, histo=None):
+        """
+        Compute and store the BumpHunter test statistic
+
+        histo - optional TH1 to store pvals for each window. Mainly used for debugging.
+        """
+        best_p, best_leftedge, best_width = min(self.pvals(histo=histo), key=itemgetter(0))
+        t = -math.log(best_p)
+        return t, best_p, best_leftedge, best_width
+
+    def pvals(self, histo=None):
+        """
+        Iterate over widths and left edge locations, compute
+        the background (null hypothesis),and calculate p-values for each. Yield the
+        ones that are interesting (a p-val is interesting if it is less than 1),
+        along with their left edge and width
+
+        histo - optional TH1 to store pvals for each window. Mainly used for debugging.
+        """
+        for window_width in self.window_widths():
+            sideband_width = self.sideband_width(window_width)
+            for leftedge, window, sideband in self.windows_and_sidebands(window_width, sideband_width):
+                # Integrate histograms over the central window and sidebands
+                # Note we will not be able to use TH2.Integrate() for non rectangular windows,
+                # so we don't bother using it here even though it would presumably be faster
+
+                # counts/error of data in the central window
+                dc, dc_error = self.integrate_histo_with_error(self.histo, window)
+
+                # counts/error of bkg in the central window
+                bc, bc_error = self.integrate_histo_with_error(self.bkg_histo, window)
+
+                # counts/error of data in the sideband
+                ds, ds_error = self.integrate_histo_with_error(self.histo, sideband)
+
+                # counts/error of bkg in the sideband
+                bs, bs_error = self.integrate_histo_with_error(self.bkg_histo, sideband)
+
+                if bc == 0:
+                    continue  # TODO: Is this necessary?
+                if dc <= bc:
+                    continue  # Not an excess
+
+                # TODO: implement deficit detection
+
+                window_p = mean_poisson_pval(dc, bc, bc_error)
+
+                if self.config.sideband_def != BumpHunterConfig.SIDEBAND_DEF_NONE:
+                    sideband_p = mean_poisson_pval(ds, bs, bs_error)
+
+                    if sideband_p < self.config.sideband_req:
+                        continue
+
+                if histo:
+                    histo.Fill(window_p)
+
+                # We return window_p, rather than the true p-val eq (17) in
+                # arxiv.org/pdf/1101.0390.pdf, in light of the paragraph
+                # after that equation
+                yield window_p, leftedge, window_width
+
+    def __del__(self):
+        self.histo.Delete()
+        if self.bkg_histo:
+            self.bkg_histo.Delete()
+
+
+class BumpHunter1D(BumpHunter):
+    @property
+    def _dim(self):
+        return 1
+    
+    @property
+    def _histo_cls(self):
+        return TH1F
+
+    @property
+    def _fcn_cls(self):
+        return TF1
+
+    def copy_histo_dimensions(self, h, name, title):
+        return TH1F(
+            name, title,
+            h.GetNbinsX(), h.GetXaxis().GetXMin(), h.GetXaxis().GetXmax()
+        )
+
+    
+class BumpHunter2D(BumpHunter):
+    """Implementation of 2D BumpHunter"""
+
+    @property
+    def _dim(self):
+        return 2
+
+    @property
+    def _histo_cls(self):
+        return TH2F
+
+    @property
+    def _fcn_cls(self):
+        return TF2
+
+    def copy_histo_dimensions(self, h, name, title):
+        return TH2F(
+            name, title,
+            h.GetNbinsX(), h.GetXaxis().GetXmin(), h.GetXaxis().GetXmax(),
+            h.GetNbinsY(), h.GetYaxis().GetXmin(), h.GetYaxis().GetXmax(),
+        )
 
     def window_widths(self):
         """
@@ -287,7 +400,7 @@ class BumpHunter2D(BumpHunter):
         completely out of bounds.
         """
         min_leftedge = list(map(add, sideband_width, (1, 1)))
-        max_leftedge = list((self.histo.GetNbinsX() - min_leftedge[0] - window_width[0], # TODO: /pm 1?
+        max_leftedge = list((self.histo.GetNbinsX() - min_leftedge[0] - window_width[0],
                              self.histo.GetNbinsY() - min_leftedge[1] - window_width[1]))
 
         if self.config.allow_oob_x:
@@ -298,208 +411,10 @@ class BumpHunter2D(BumpHunter):
             max_leftedge[1] += sideband_width[1]
 
         step_size = self.step_size(window_width)
-        
+
         for leftedge in product(range(min_leftedge[0], max_leftedge[0], step_size[0]),
                                 range(min_leftedge[1], max_leftedge[1], step_size[1])):
             window = self.window(leftedge, window_width)
             sideband = self.sideband(leftedge, window_width, sideband_width, window)
             yield (leftedge, window, sideband)
 
-
-    def get_best_bump(self, histo=None):
-        """
-        Compute and store the BumpHunter test statistic
-
-        histo - optional TH1 to store pvals for each window. Mainly used for debugging.
-        """
-        best_p, best_leftedge, best_width = min(self.pvals(histo=histo), key=itemgetter(0))
-        t = -math.log(best_p)
-        self.best_p, self.best_leftedge, self.best_width = best_p, best_leftedge, best_width
-        self.t = t
-        return t, best_p, best_leftedge, best_width
-
-
-    def pvals(self, histo=None):
-        """
-        Iterate over widths and left edge locations, compute
-        the background (null hypothesis),and calculate p-values for each. Yield the
-        ones that are interesting (a p-val is interesting if it is less than 1),
-        along with their left edge and width
-
-        histo - optional TH1 to store pvals for each window. Mainly used for debugging.
-        """
-        for window_width in self.window_widths():
-            sideband_width = self.sideband_width(window_width)
-            for leftedge, window, sideband in self.windows_and_sidebands(window_width, sideband_width):
-                # Integrate histograms over the central window and sidebands
-                # Note we will not be able to use TH2.Integrate() for non rectangular windows,
-                # so we don't bother using it here even though it would presumably be faster
-
-                # counts/error of data in the central window
-                dc, dc_error = BumpHunter.integrate_histo_with_error(self.histo, window)
-
-                # counts/error of bkg in the central window
-                bc, bc_error = BumpHunter.integrate_histo_with_error(self.bkg_histo, window)
-
-                # counts/error of data in the sideband
-                ds, ds_error = BumpHunter.integrate_histo_with_error(self.histo, sideband)
-
-                # counts/error of bkg in the sideband
-                bs, bs_error = BumpHunter.integrate_histo_with_error(self.bkg_histo, sideband)
-
-                if bc == 0:
-                    continue  # TODO: Is this necessary?
-                if dc <= bc:
-                    continue  # Not an excess
-
-                # TODO: implement deficit detection
-
-                window_p = BumpHunter.mean_poisson_pval(dc, bc, bc_error)
-
-                if self.config.sideband_def != BumpHunterConfig.SIDEBAND_DEF_NONE:
-                    sideband_p = BumpHunter.mean_poisson_pval(ds, bs, bs_error)
-
-                    if sideband_p < self.config.sideband_req:
-                        continue
-
-                if histo:
-                    histo.Fill(window_p)
-
-                # We return window_p, rather than eq (17) in
-                # arxiv.org/pdf/1101.0390.pdf, in light of the paragraph
-                # after that equation
-                yield window_p, leftedge, window_width
-
-
-    def pseudoexperiments(self, n, target_pval=None, target_err=None, fcn=None,
-                          reset=False, progress_out=None):
-        """
-        Run pseudoexperiments: generate fake data according to the distribution in
-        self.bkg_histo, run Bumphunter (including re-fitting and re-generating a new bkg_histo),
-        store the test statistics. Finally, if the data's test statistic has already been
-        computed, calculate the probability of observing the data's test statistic, and
-        return it and its error.
-
-        n - max number of pseudoexperiments to run
-        target_pval - stop running when this pval is reached
-        fcn - TH2 to use for fitting
-        reset - if True, clears all stored test statistics from previous pseudoexperiments
-        progress_out - stream to write progress updates
-        """
-        fit_fcn = self.fit_fcn or fcn
-
-        assert fit_fcn, "If BumpHunter is instantiated w/o param fit_fcn, a TF2 "\
-            "must be passed to pseudoexperiment()"
-
-        if reset:
-            self.pseudoexperiments_t = []
-
-        num_t = float(len(self.pseudoexperiments_t))
-        num_greater = float(len([t for t in self.pseudoexperiments_t if t >= self.t]))
-        current_pval, current_err = 0, 0
-
-        progress_str = "Done pseudoexperiment %%%ss, t = %%s, pval = %%s \pm %%s" % len(str(n))
-
-        from datetime import datetime
-        prev_time, current_time = datetime.now(), datetime.now()
-
-        for i in range(n):
-            # Get the test statistic for a pseudoexperiment
-            t = self.one_pseudoexperiment(fit_fcn)
-            self.pseudoexperiments_t.append(t)
-
-            # Compute new pval/error
-            num_t += 1
-            if t >= self.t:
-                num_greater += 1
-            current_pval = num_greater/num_t
-            current_err = math.sqrt(current_pval * (1.0 - current_pval)/num_t)
-
-            if progress_out:
-                prev_time, current_time = current_time, datetime.now()
-                print >>progress_out, progress_str % (i+1, t, current_pval, current_err) + ", time since last = %s" % (current_time-prev_time)
-
-            # Stop if
-            # 1.) the caller passed a target pval
-            # 2.) at least one pseudoexperiment returned a test statistic greater
-            #     than the observed data (otherwise the pval is zero and meaningless)
-            # 3.) the current p value is less than the target, accounting for error
-            if self.done_pseudoexperiments(num_greater, current_pval, current_err,
-                                           target_pval=target_pval, target_err=target_err):
-                return current_pval, current_err
-
-        return current_pval, current_err
-
-    def pseudoexperiments_simple(self, n, fit_fcn):
-        """
-        Run pseudoexperiments without calculating anything but t-statistics, with a simple
-        interface for use when running in batch
-        """
-        for i in range(n):
-            t = self.one_pseudoexperiment(fit_fcn)
-            print t
-
-
-    def done_pseudoexperiments(self, num_greater, current_pval, current_err, target_pval=None,
-                               target_err=None):
-        """
-        Check whether we are done running pseudoexperiments.
-        """
-
-        # At least one pseudoexperiment should have returned a test stat greater than
-        # the observed data (otherwise the pval is zero and meaningless), and at least
-        # one should have returned a test stat less than the observed data
-        if num_greater == 0 or num_greater == len(self.pseudoexperiments_t):
-            return False
-
-        # If target_pval is supplied and we have gotten down to it, stop
-        if target_pval and current_pval + current_err < target_pval:
-            return True
-
-        # If target_err is supplied and we have gotten down to it, stop
-        if target_err and current_err < target_err:
-            return True
-
-        # --num-pseudo is enforced by the `for` structure
-        return False
-
-            
-    def one_pseudoexperiment(self, fit_fcn):
-        """
-        Run one pseudoexperiment, return test statistic
-        """
-        h = self.histo # alias for shortening the following
-        pseudo_histo = TH2F(
-            "pseudodata", "2D BumpHunter pseudoexperiment",
-            h.GetNbinsX(), h.GetXaxis().GetXmin(), h.GetXaxis().GetXmax(),
-            h.GetNbinsY(), h.GetYaxis().GetXmin(), h.GetYaxis().GetXmax(),
-        )
-        pseudo_histo.FillRandom(self.bkg_histo, h.Integral())
-
-        # Create a bumphunter instance with this BumpHunter's config attributes
-        # Don't use copy.deepcopy() because we don't want to copy self.best_p,
-        # self.pseudoexperiments_t, etc.
-        # We want to re-run the constructor so it re-fits the background
-        bh = self.__class__(pseudo_histo, fit_fcn=fit_fcn, config=self.config)
-
-        t = bh.get_best_bump()[0]
-        bh.histo.Delete() # pseudo_histo
-        bh.bkg_histo.Delete()
-        return t
-
-    
-    # def final_pval(self):
-    #     """
-    #     Compute the final p-value comparing this data's test statistic to pseudoexperiments.
-    #     According to the line after (4) in arxiv.org/pdf/1101.0390.pdf, this is just s/n
-    #     """
-    #     assert self.t, "Cannot call final_pval() before get_best_bump()"
-    #     assert self.pseudoexperiments, "Cannot call final_pval() before pseudoexperiments()"
-
-    #     n = float(len(self.pseudoexperiments_t))
-    #     s = float(len([t for t in self.pseudoexperiments_t if t >= self.t]))
-
-    #     p = s/n
-    #     err = math.sqrt(p * (1.0 - p)/n)
-
-    #     return p, err
