@@ -5,13 +5,15 @@ Author: Vyassa Baratham <vbaratham@berkeley.edu>
 """
 
 import abc
+import array
 import sys
 import math
+import json
 import itertools
 
 from operator import add, itemgetter
 
-from ROOT import TF1, TF2, TH1F, TH2F
+from ROOT import TF1, TF2, TH1F, TH2F, TTree
 
 from .utils import mean_poisson_pval, poisson_pval
 
@@ -54,6 +56,11 @@ class BumpHunterConfig(object):
         self.allow_oob_x = allow_oob_x
         self.allow_oob_y = allow_oob_y
 
+    def to_dict(self):
+        return {name: getattr(self, name) for name in [
+            'window_def', 'sideband_def', 'deviation_from_sq', 'allow_oob_x', 'allow_oob_y',
+        ]}
+
 
 class BumpHunter(object):
     """
@@ -76,7 +83,6 @@ class BumpHunter(object):
     @abc.abstractproperty
     def _fcn_cls(self):
         raise NotImplementedError()
-
 
     def __init__(self, histo, fit_fcn=None, bkg_histo=None, config=None):
         """
@@ -248,6 +254,46 @@ class BumpHunter(object):
         bh.bkg_histo.Delete()
 
         return t
+
+    def write_rootfile(self):
+        """
+        Put the signal and bkg histos and the config as a json string
+        into the currently open rootfile.
+
+        rootfile - writable TFile
+        """
+        self.histo.Write()
+        self.bkg_histo.Write()
+
+        config_str = json.dumps(self.config.to_dict())
+        config_array = array.array('B', config_str)
+        
+        t = TTree("configtree", "BumpHunter Config")
+        t.Branch("config", config_array, "config[%s]/C" % len(config_array))
+        t.Fill()
+        t.Write()
+
+    @classmethod
+    def from_rootfile(cls, rootfile, signal=None, bkg=None, config=None):
+        """
+        Create a Bumphunter from an open root file.
+
+        rootfile - TFile to read. The signal histo should be called 'signal', the bkg histo
+                   should be called 'bkg', and the config should be stored as a json string
+                   in a branch called "config" in a tree called "configtree"
+        signal, bkg, config - override whats in the root file
+        """
+        signal = signal or rootfile.Get("signal")
+        bkg = bkg or rootfile.Get("bkg")
+        
+        config_tree = rootfile.Get("configtree")
+        config_str = iter(config_tree).next().config
+        config = BumpHunterConfig(**json.loads(config_str[:-1]))
+        # The tree seems to read out the null terminator, hence the [:-1] above^
+
+        bh_cls = BumpHunter1D if isinstance(signal, TH1F) else BumpHunter2D
+
+        return bh_cls(signal, bkg_histo=bkg, config=config)
 
 
 class BumpHunter1D(BumpHunter):

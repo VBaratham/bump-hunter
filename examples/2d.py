@@ -90,10 +90,9 @@ def main(args):
 
     c2 = TCanvas("c2")
     bh.histo.Draw("LEGO2 HIST")
-    bh.histo.Write()
     # c3 = TCanvas("c3")
     # bh.bkg_histo.Draw("LEGO2 HIST")
-    bh.bkg_histo.Write()
+    bh.write_rootfile()
 
     f.Close()
 
