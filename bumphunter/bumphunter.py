@@ -227,10 +227,13 @@ class BumpHunter(object):
             # after that equation
             yield window_p, leftedge, width
 
-    def pseudoexperiments(self, n, fit_fcn, out=sys.stdout):
+    def pseudoexperiments(self, n, fit_fcn=None, out=sys.stdout):
         """
         Run pseudoexperiments and spit t statistics to out
         """
+        fit_fcn = fit_fcn or self.fit_fcn
+        assert fit_fcn
+
         for i in range(n):
             print >>out,  self.one_pseudoexperiment(fit_fcn)
 
@@ -287,9 +290,14 @@ class BumpHunter(object):
         bkg = bkg or rootfile.Get("bkg")
         
         config_tree = rootfile.Get("configtree")
-        config_str = iter(config_tree).next().config
-        config = BumpHunterConfig(**json.loads(config_str[:-1]))
-        # The tree seems to read out the null terminator, hence the [:-1] above^
+        if config_tree:
+            config_str = iter(config_tree).next().config
+            config = BumpHunterConfig(**json.loads(config_str[:-1]))
+            # The tree seems to read out the null terminator, hence the [:-1] above^
+        else:
+            # Use default config for backwards compatibility with runs from before the
+            # config was written into the rootfile (prior to 6/15/2017)
+            config = BumpHunterConfig()
 
         bh_cls = BumpHunter1D if isinstance(signal, TH1F) else BumpHunter2D
 

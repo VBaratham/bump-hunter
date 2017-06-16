@@ -116,14 +116,15 @@ def main(args):
                                                 (best_leftedge[1] - 1) * args.binsize )
         print >>out, "Width: (%s, %s):" % (best_width[0]*args.binsize, best_width[1]*args.binsize)
         print >>out, ""
-        print >>out, "Running %s pseudoexperiments..." % args.num_pseudo
-        print >>out, ""
 
-        final_pval, err = bh.pseudoexperiments(
-            args.num_pseudo, target_pval=args.pval, progress_out=out)
+        if args.num_pseudo > 0:
+            print >>out, "Running %s pseudoexperiments..." % args.num_pseudo
+            print >>out, ""
 
-        print >>out, ""
-        print >>out, "Final p-value: p = %s \pm %s" % (final_pval, err)
+            final_pval, err = bh.pseudoexperiments(args.num_pseudo, out=out)
+
+            print >>out, ""
+            print >>out, "Final p-value: p = %s \pm %s" % (final_pval, err)
 
     # Hang the program so the user can look at the output
     raw_input("Press enter to quit")

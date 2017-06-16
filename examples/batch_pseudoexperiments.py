@@ -25,8 +25,9 @@ def create_script(scriptname, args):
                                                                   indent=4).split('\n'))
         print >>f, '# %s' % os.path.split(os.getcwd())[-1]
         print >>f, ""
-        arg_str = '--rootfile %s --name %s --num %s --formula "%s"' % (args.rootfile, args.name,
-                                                                       args.num_per_host, args.formula)
+        arg_str = '--rootfile %s --num %s --formula "%s"' % (args.rootfile,
+                                                             args.num_per_host,
+                                                             args.formula)
         print >>f, "python ${BUMPHUNTER_LIB}/examples/pseudoexperiments.py %s" % arg_str
 
 
@@ -36,10 +37,7 @@ def submit_jobs(scriptname, args):
     """
     create_script(scriptname, args)
     qsub_out = subprocess.check_output("qsub -t 1-%s:1 %s" % (args.num_hosts, scriptname), shell=True)
-    try:
-        return re.search("Your job-array (\d+)", qsub_out).group(1)
-    except AttributeError:
-        return None
+    return qsub_out
 
 
 def wait_jobs(jobnum):
@@ -58,11 +56,24 @@ def main(args):
     os.chdir(dirname)
 
     scriptname = "pseudoexperiments.sh"
-    jobnum = submit_jobs(scriptname, args)
-    if not jobnum:
-        print "Could not read job number from qsub command"
+    qsub_out = submit_jobs(scriptname, args)
+    try:
+        jobnum = re.search("Your job-array (\d+)", qsub_out).group(1)
+        print "Submitted job %s" % jobnum
+        print "Check status with `qstat -u <username>`"
+        print "Delete with `qdel -j %s`" % jobnum
+    except AttributeError:
+        print "Could not read job number from qsub command. qsub output:"
+        print
+        print qsub_out
+        print
+        print "Check status with `qstat -u <username>`"
+        print "Delete with `qdel -j <jobnum>`"
         sys.exit(1)
+
+
     if args.t_obs: # User wants to calculate and display final p-val
+        print "Waiting for completion..."
         wait_jobs(jobnum)
         print read_batch_pseudoexperiments(os.getcwd(), args.t_obs)
     
