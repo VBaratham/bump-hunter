@@ -635,7 +635,7 @@ class BumpHunter3D(BumpHunter):
         window_width - width of central window
         """
         if self.config.sideband_def == BumpHunterConfig.SIDEBAND_DEF_NONE:
-            return (0, 0)
+            return (0, 0, 0)
         return tuple(max(1, int(math.floor(x/2))) for x in window_width)
 
     def sideband(self, leftedge, window_width, sideband_width, window):
