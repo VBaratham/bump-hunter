@@ -658,7 +658,7 @@ class BumpHunter3D(BumpHunter):
                     (
                         leftedge[0] - sideband_width[0] + x,
                         leftedge[1] - sideband_width[1] + y,
-                        leftedge[2] - sideband_width[2] + y,
+                        leftedge[2] - sideband_width[2] + z,
                     )
                     for x in range(-tot_width[0], tot_width[0])
                     for y in range(-tot_width[1], tot_width[1])
