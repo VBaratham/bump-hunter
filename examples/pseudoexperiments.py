@@ -34,7 +34,8 @@ def main(args):
     f = TFile.Open(args.rootfile)
     bh = BumpHunter.from_rootfile(f)
     fit_fcn = get_fit_fcn(bh.histo, args)
-    bh.pseudoexperiments(args.num, fit_fcn)
+    for t in bh.pseudoexperiments(args.num, fit_fcn):
+        print t
     f.Close()
 
 

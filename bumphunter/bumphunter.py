@@ -13,7 +13,7 @@ import itertools
 
 from operator import add, itemgetter
 
-from ROOT import TF1, TF2, TH1F, TH2F, TTree
+from ROOT import TF1, TF2, TF3, TH1F, TH2F, TH3F, TTree
 
 from .utils import mean_poisson_pval, poisson_pval
 
@@ -105,18 +105,6 @@ class BumpHunter(object):
 
         self.config = config or BumpHunterConfig()
 
-    @staticmethod
-    def integrate_histo_with_error(histo, bins):
-        """
-        Add the given bins from self.histo and their errors, return both sums.
-
-        bins - collection of (binx, biny) tuples of bins to integrate
-        """
-        return (
-            sum(histo.GetBinContent(*b) for b in bins),
-            math.sqrt(sum(histo.GetBinError(*b)*histo.GetBinError(*b) for b in bins))
-        )
-
     @abc.abstractmethod
     def copy_histo_dimensions(self, h, name, title):
         """
@@ -132,6 +120,19 @@ class BumpHunter(object):
         window and sideband are d-tuples of (x, y, ...)
         """
         raise NotImplementedError()
+
+
+    @staticmethod
+    def integrate_histo_with_error(histo, bins):
+        """
+        Add the given bins from self.histo and their errors, return both sums.
+
+        bins - collection of (binx, biny) tuples of bins to integrate
+        """
+        return (
+            sum(histo.GetBinContent(*b) for b in bins),
+            math.sqrt(sum(histo.GetBinError(*b)*histo.GetBinError(*b) for b in bins))
+        )
 
     def prettify_axes(self, histo, x="X", y="Y", z="Z", offset=2):
         """
@@ -219,6 +220,9 @@ class BumpHunter(object):
                 if sideband_p < self.config.sideband_req:
                     continue
 
+            # if window_p == 0:
+            #     import pdb; pdb.set_trace()
+
             if histo:
                 histo.Fill(window_p)
 
@@ -227,15 +231,15 @@ class BumpHunter(object):
             # after that equation
             yield window_p, leftedge, width
 
-    def pseudoexperiments(self, n, fit_fcn=None, out=sys.stdout):
+    def pseudoexperiments(self, n, fit_fcn=None):
         """
-        Run pseudoexperiments and spit t statistics to out
+        Run pseudoexperiments and yield t statistics
         """
         fit_fcn = fit_fcn or self.fit_fcn
         assert fit_fcn
 
         for i in range(n):
-            print >>out,  self.one_pseudoexperiment(fit_fcn)
+            yield self.one_pseudoexperiment(fit_fcn)
 
     def one_pseudoexperiment(self, fit_fcn):
         """
@@ -253,6 +257,7 @@ class BumpHunter(object):
 
         t = bh.get_best_bump()[0]
 
+        # TODO: Are these lines necessary?
         bh.histo.Delete()
         bh.bkg_histo.Delete()
 
@@ -299,7 +304,7 @@ class BumpHunter(object):
             # config was written into the rootfile (prior to 6/15/2017)
             config = BumpHunterConfig()
 
-        bh_cls = BumpHunter1D if isinstance(signal, TH1F) else BumpHunter2D
+        bh_cls = BumpHunter1D if isinstance(signal, TH1F) else BumpHunter2D if isinstance(signal, TH2F) else BumpHunter3D # TODO: can just use `cls`?
 
         return bh_cls(signal, bkg_histo=bkg, config=config)
 
@@ -491,3 +496,207 @@ class BumpHunter2D(BumpHunter):
             sideband = self.sideband(leftedge, window_width, sideband_width, window)
             yield (leftedge, window_width, window, sideband)
 
+
+class BumpHunter3D(BumpHunter):
+    @property
+    def _dim(self):
+        return 3
+
+    @property
+    def _histo_cls(self):
+        return TH3F
+
+    @property
+    def _fcn_cls(self):
+        return TH3
+
+    def make_bkg_histo(self, h, fit_fcn):
+        """
+        TF3.CreateHistogram() is a stub in ROOT -__-
+        """
+        fit = h.Fit(fit_fcn, 'q') # 'q' = quiet (no output)
+        # fit = h.Fit(fit_fcn)
+        bkg_histo = self.copy_histo_dimensions(h, "bkg", "Background Estimate")
+        diff_histo = TH1F("diff", "(data - fit_fcn) for each bin", 100, -30, 30) # TODO: remove (debug)
+        self.prettify_axes(bkg_histo)
+
+        dx = (h.GetXaxis().GetXmax() - h.GetXaxis().GetXmin()) / h.GetNbinsX()
+        dy = (h.GetYaxis().GetXmax() - h.GetYaxis().GetXmin()) / h.GetNbinsY()
+        dz = (h.GetZaxis().GetXmax() - h.GetZaxis().GetXmin()) / h.GetNbinsZ()
+
+        xmin = h.GetXaxis().GetXmin() + 0.5*dx
+        ymin = h.GetYaxis().GetXmin() + 0.5*dy
+        zmin = h.GetZaxis().GetXmin() + 0.5*dz
+
+        for x_bin in range(h.GetNbinsX()):
+            for y_bin in range(h.GetNbinsY()):
+                for z_bin in range(h.GetNbinsZ()):
+                    x, y, z = xmin + x_bin*dx, ymin + y_bin*dy, zmin + z_bin*dz
+                    bkg_est = fit_fcn.Eval(x, y, z)
+                    bkg_histo.SetBinContent(x_bin+1, y_bin+1, z_bin+1, bkg_est)
+                    diff_histo.Fill(h.GetBinContent(x_bin+1, y_bin+1, z_bin+1) - bkg_est)
+
+        return bkg_histo
+
+    def copy_histo_dimensions(self, h, name, title):
+        return TH3F(
+            name, title,
+            h.GetNbinsX(), h.GetXaxis().GetXmin(), h.GetXaxis().GetXmax(),
+            h.GetNbinsY(), h.GetYaxis().GetXmin(), h.GetYaxis().GetXmax(),
+            h.GetNbinsZ(), h.GetZaxis().GetXmin(), h.GetZaxis().GetXmax(),
+        )
+    
+    def windows_and_sidebands(self):
+        """
+        Yield tuples of (leftedge, window, sideband), where window
+        and sideband are collections of (binx, biny) tuples. Each window
+        must be defined so that the window+sideband is in the histogram, unless
+        self.config.allow_oob_x/y is True, in which case the sideband may be partially or
+        completely out of bounds.
+        """
+        return itertools.chain.from_iterable(
+            self.windows_and_sidebands_for_width(window_width, self.sideband_width(window_width))
+            for window_width in self.window_widths()
+        )
+
+    def window_widths(self):
+        """
+        Return an iterable containing (x, y) tuples of window widths to scan.
+        Default behavior is to start with square windows, then
+        skew every window by adding and subtracting each integer in
+        [1, self.config.deviation_from_sq) from the xwidth of each window, leaving ywidth
+        untouched, returning only those windows with widths in [1, floor(N/2)].
+        To see why we do this, look at the following, which shows the main diagonal
+        (square windows) as X's, the "nearby" (slightly skewed windows) as 0's, and
+        far away (heavily skewed windows) as dots:
+
+          1 2 3 4 5 6 7 8 9
+          -----------------
+        1| X 0 0 0 . . . . .
+        2| 0 X 0 0 0 . . . .
+        3| 0 0 X 0 0 0 . . .
+        4| 0 0 0 X 0 0 0 . .
+        5| . 0 0 0 X 0 0 0 .
+        6| . . 0 0 0 X 0 0 0 
+        7| . . . 0 0 0 X 0 0
+        8| . . . . 0 0 0 X 0
+        9| . . . . . 0 0 0 X
+        """
+        max_x = int(math.floor(self.histo.GetNbinsX()/2))
+        max_y = int(math.floor(self.histo.GetNbinsY()/2))
+        max_z = int(math.floor(self.histo.GetNbinsZ()/2))
+        for xwidth, ywidth, zwidth in zip(
+            xrange(1, max_x),
+            xrange(1, max_y),
+            xrange(1, max_z),
+        ):
+            yield (xwidth, ywidth, zwidth)
+            for i in range(1, self.config.deviation_from_sq):
+                for j in range(1, self.config.deviation_from_sq):
+                    _xwidth, xwidth_ = xwidth - i, xwidth + i
+                    _ywidth, ywidth_ = ywidth - j, ywidth + j
+                    if _xwidth >= 1 and _ywidth >= 1:
+                        yield (_xwidth, _ywidth, zwidth)
+                    if xwidth_ <= max_x and _ywidth >= 1:
+                        yield (xwidth_, _ywidth, zwidth)
+                    if _xwidth >= 1 and ywidth_ <= max_y:
+                        yield (xwidth_, ywidth_, zwidth)
+                    if xwidth_ <= max_x and ywidth_ <= max_y:
+                        yield (xwidth_, ywidth_, zwidth)
+
+    def window(self, leftedge, width):
+        """
+        Return a collection of (binx, biny) tuples corresponding to the window
+        with the given left edge location and width. Exactly how the window is defined
+        depends on self.config.window_def.
+
+        leftedge - (x, y, z) tuple of window's left edge coordinate
+        width - (x, y, z) tuple of window width
+        """
+        if self.config.window_def == BumpHunterConfig.WINDOW_DEF_RECTANGLE:
+            return tuple(
+                (leftedge[0] + x, leftedge[1] + y, leftedge[2] + z)
+                for x in range(width[0])
+                for y in range(width[1])
+                for z in range(width[2])
+            )        
+        else:
+            raise ValueError("Unrecognized window definition (self.config.window_def). "
+                             "Use one of BumpHunterConfig.WINDOW_DEF_*")
+
+    def sideband_width(self, window_width):
+        # TODO: exactly same as 2D, refactor
+        """
+        Return (widthx, widthy, widthz) of the sideband to be used for a particular window size.
+        This is a single-valued function of central window width. TODO: is this ok?
+        Do we need to use different sideband widths for different center locations
+        with the same window_width?
+
+        window_width - width of central window
+        """
+        if self.config.sideband_def == BumpHunterConfig.SIDEBAND_DEF_NONE:
+            return (0, 0)
+        return tuple(max(1, int(math.floor(x/2))) for x in window_width)
+
+    def sideband(self, leftedge, window_width, sideband_width, window):
+        """
+        Return a collection of (binx, biny, binz) tuples corresponding
+        to the sideband of a particular central window. Exactly how the sideband is
+        defined depends on self.config.sideband_def
+
+        leftedge - coordinates of the left edge of the window
+        window_width - x/y/z widths of the central window
+        sideband_width - x/y/z widths of the sideband
+        """
+        if self.config.sideband_def != BumpHunterConfig.SIDEBAND_DEF_NONE and self.config.window_def != BumpHunterConfig.WINDOW_DEF_RECTANGLE:
+            raise NotImplementedError("Sidebands not yet implemented for "
+                                      "non-rectangular central window")
+        if self.config.sideband_def == BumpHunterConfig.SIDEBAND_DEF_RECTANGLE:
+            tot_width = tuple(sum(x) for x in zip(window_width, sideband_width, sideband_width))
+            return tuple(
+                cell for cell in set(
+                    (
+                        leftedge[0] - sideband_width[0] + x,
+                        leftedge[1] - sideband_width[1] + y,
+                        leftedge[2] - sideband_width[2] + y,
+                    )
+                    for x in range(-tot_width[0], tot_width[0])
+                    for y in range(-tot_width[1], tot_width[1])
+                    for z in range(-tot_width[2], tot_width[2])
+                ) if cell not in window
+            )  ## TODO: kinda inefficient^
+        if self.config.sideband_def == BumpHunterConfig.SIDEBAND_DEF_NONE:
+            return []
+        else:
+            raise ValueError("Unrecognized sideband definition (self.config.sideband_def). "
+                             "Use one of BumpHunterConfig.SIDEBAND_DEF_*")
+
+    def step_size(self, window_width):
+        # TODO exactly same as 2D, refactor
+        """
+        Return the step size along each dimension to use for the given window width
+        """
+        return tuple(max(1, int(math.floor(x/2))) for x in window_width)
+
+    def windows_and_sidebands_for_width(self, window_width, sideband_width):
+        min_leftedge = list(map(add, sideband_width, (1, 1, 1)))
+        max_leftedge = list((self.histo.GetNbinsX() - min_leftedge[0] - window_width[0],
+                             self.histo.GetNbinsY() - min_leftedge[1] - window_width[1],
+                             self.histo.GetNbinsZ() - min_leftedge[2] - window_width[2]))
+
+        if self.config.allow_oob_x:
+            min_leftedge[0] -= sideband_width[0]
+            max_leftedge[0] += sideband_width[0]
+        if self.config.allow_oob_y:
+            min_leftedge[1] -= sideband_width[1]
+            max_leftedge[1] += sideband_width[1]
+        # TODO: implement allow_oob_z (why would anyone need this?)
+
+        step_size = self.step_size(window_width)
+
+        for leftedge in itertools.product(range(min_leftedge[0], max_leftedge[0], step_size[0]),
+                                          range(min_leftedge[1], max_leftedge[1], step_size[1]),
+                                          range(min_leftedge[2], max_leftedge[2], step_size[2])):
+            window = self.window(leftedge, window_width)
+            sideband = self.sideband(leftedge, window_width, sideband_width, window)
+            yield (leftedge, window_width, window, sideband)
