@@ -56,6 +56,23 @@ def make_histo_1d(title, args, include_signal=True):
     return histo
 
 
+def get_fit_fcn_1d(histo):
+    fit_fcn = TF2(
+        "expo1", "[0]*exp(-[1] - [2]*x + 0*y)",
+        histo.GetXaxis().GetXmin(),
+        histo.GetXaxis().GetXmax(),
+        histo.GetYaxis().GetXmin(),
+        histo.GetYaxis().GetXmax(),
+    )
+    fit_fcn.SetNpx(histo.GetNbinsX())
+    fit_fcn.SetNpy(histo.GetNbinsY())
+
+    fit_fcn.SetParameter(0, 1000)
+    fit_fcn.SetParameter(1, 1)
+    fit_fcn.SetParameter(2, 0.2)
+
+    return fit_fcn
+
 
 def main(args):
     timestamp = datetime.now().isoformat()
@@ -125,17 +142,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run BumpHunter on randomly generated 2D data")
     parser.add_argument('--nbkg', type=int, default=20000,
                         help='Number of background events to generate')
-    parser.add_argument('--nsig', type=int, default=200,
+    parser.add_argument('--nsig', type=int, default=600,
                         help='Number of signal events to generate')
-    parser.add_argument('--nbins', type=int, default=40,
+    parser.add_argument('--nbins', type=int, default=50,
                         help='Number of bins along each dimension')
     parser.add_argument('--binsize', type=float, default=0.5,
                         help='Size of each bin along each dimension')
     parser.add_argument('--bkg-mean', type=float, default=8,
                         help='Mean of background exponential distribution')
-    parser.add_argument('--sig-x', type=float, default=5,
+    parser.add_argument('--sig-x', type=float, default=12,
                         help='x position of signal peak')
-    parser.add_argument('--sig-spread-x', type=float, default=.6,
+    parser.add_argument('--sig-spread-x', type=float, default=.7,
                         help='stdev along x axis of signal peak')
     parser.add_argument('--num-pseudo', type=int, default=100,
                         help='max number of pseudoexperiments to run to estimate final p-val')
